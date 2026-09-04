@@ -10,11 +10,12 @@ function applyFilters() {
   let visible = 0;
   cards.forEach(card => {
     const categoryOk = activeCategory === '全部' || card.dataset.category === activeCategory;
-    const storeOk = storeSelect.value === '全部' || card.dataset.store === storeSelect.value;
+    const storeOk = storeSelect.value === '全部' || card.dataset.storeId === storeSelect.value;
+    const scheduleStoreOk = availableStoreIds().includes(card.dataset.storeId);
     const configured = card.dataset.locationsConfigured === 'true';
     const locations = card.dataset.locations ? card.dataset.locations.split(',') : [];
     const locationOk = !configured || locations.includes(locationSelect.value);
-    card.hidden = !(categoryOk && storeOk && locationOk);
+    card.hidden = !(categoryOk && storeOk && scheduleStoreOk && locationOk);
     if (!card.hidden) visible++;
   });
   document.querySelector('#emptyState').hidden = visible !== 0;
@@ -29,6 +30,7 @@ filters.forEach(button => button.addEventListener('click', () => {
 storeSelect.addEventListener('change', applyFilters);
 
 const schedules = window.ORDER_SCHEDULES || [];
+const stores = window.ORDER_STORES || [];
 const dateSelect = document.querySelector('#dateSelect');
 const locationSelect = document.querySelector('#locationSelect');
 
@@ -42,8 +44,23 @@ function updatePickupSlots() {
   document.querySelector('#pickupTime').textContent = slots.length ? `可選時間 ${slots.join('、')}` : '目前沒有可選時段';
   const slotSelect = document.querySelector('#pickupTimeSelect');
   slotSelect.replaceChildren(...slots.map(slot => new Option(slot, slot)));
+  updateStores();
   removeUnavailableCartItems();
   applyFilters();
+}
+
+function availableStoreIds() {
+  const schedule = selectedSchedule();
+  if (!schedule) return [];
+  return schedule.stores_configured ? (schedule.store_ids || []) : stores.filter(store => store.active !== false).map(store => store.id);
+}
+
+function updateStores() {
+  const previous = storeSelect.value;
+  const allowed = new Set(availableStoreIds());
+  const available = stores.filter(store => store.active !== false && allowed.has(store.id));
+  storeSelect.replaceChildren(new Option('全部店家', '全部'), ...available.map(store => new Option(store.name, store.id)));
+  if ([...storeSelect.options].some(option => option.value === previous)) storeSelect.value = previous;
 }
 
 function updateLocations() {
@@ -90,7 +107,8 @@ function removeUnavailableCartItems() {
   if (!locationSelect?.value) return;
   let removed = false;
   cart.forEach((item, key) => {
-    if (item.locationsConfigured && !item.locations.includes(locationSelect.value)) {
+    const storeAllowed = availableStoreIds().includes(item.storeId);
+    if ((item.locationsConfigured && !item.locations.includes(locationSelect.value)) || !storeAllowed) {
       cart.delete(key);
       removed = true;
     }
@@ -113,7 +131,7 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
   const option = card.querySelector('.meal-option')?.selectedOptions[0];
   const optionName = option?.value || '';
   const key = `${button.dataset.id}::${optionName}`;
-  const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
+  const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, storeId: card.dataset.storeId, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
   current.qty++;
   cart.set(key, current);
   updateCart();

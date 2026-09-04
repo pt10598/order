@@ -9,7 +9,7 @@
     <form method="post" action="/admin/menu/save" enctype="multipart/form-data" class="admin-form">
       <input type="hidden" name="meal_id" value="{{ editing.id if editing else '' }}">
       <label>餐點名稱<input name="name" value="{{ editing.name if editing else '' }}" required></label>
-      <div class="two"><label>店家<input name="store" value="{{ editing.store if editing else '' }}" required></label><label>分類<input name="category" value="{{ editing.category if editing else '' }}" required></label></div>
+      <div class="two"><label>所屬店家<select name="store_id" required>{% for store in stores if store.active or (editing and store.id==editing.store_id) %}<option value="{{ store.id }}" {% if editing and (store.id==editing.store_id or (not editing.store_id and store.name==editing.store)) %}selected{% endif %}>{{ store.name }}</option>{% endfor %}</select><small>店家請至「訂餐設定」新增。</small></label><label>分類<input name="category" value="{{ editing.category if editing else '' }}" required></label></div>
       <label>餐點說明<textarea name="description">{{ editing.description if editing else '' }}</textarea></label>
       <div class="two"><label>基本價格<input type="number" name="price" min="0" value="{{ editing.price if editing else 0 }}" required><small>沒有設定規格時使用。</small></label><label>排序<input type="number" name="sort" value="{{ editing.sort if editing else 99 }}"></label></div>
       <fieldset class="menu-fieldset"><legend>供應地點</legend><p>只勾選有供應這項餐點的取餐地點。</p><div class="location-checks">
