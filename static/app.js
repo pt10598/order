@@ -11,7 +11,10 @@ function applyFilters() {
   cards.forEach(card => {
     const categoryOk = activeCategory === '全部' || card.dataset.category === activeCategory;
     const storeOk = storeSelect.value === '全部' || card.dataset.store === storeSelect.value;
-    card.hidden = !(categoryOk && storeOk);
+    const configured = card.dataset.locationsConfigured === 'true';
+    const locations = card.dataset.locations ? card.dataset.locations.split(',') : [];
+    const locationOk = !configured || locations.includes(locationSelect.value);
+    card.hidden = !(categoryOk && storeOk && locationOk);
     if (!card.hidden) visible++;
   });
   document.querySelector('#emptyState').hidden = visible !== 0;
@@ -39,6 +42,8 @@ function updatePickupSlots() {
   document.querySelector('#pickupTime').textContent = slots.length ? `可選時間 ${slots.join('、')}` : '目前沒有可選時段';
   const slotSelect = document.querySelector('#pickupTimeSelect');
   slotSelect.replaceChildren(...slots.map(slot => new Option(slot, slot)));
+  removeUnavailableCartItems();
+  applyFilters();
 }
 
 function updateLocations() {
@@ -77,15 +82,40 @@ function updateCart() {
   document.querySelector('#dialogTotal').textContent = `NT$ ${total}`;
   cartBar.hidden = count === 0;
   document.querySelector('#cartItems').innerHTML = items.map(item =>
-    `<div class="cart-line"><div><strong>${item.name}</strong><br><span>數量 ${item.qty}</span></div><strong>NT$ ${item.price * item.qty}</strong></div>`
+    `<div class="cart-line"><div><strong>${item.name}${item.optionName ? `（${item.optionName}）` : ''}</strong><br><span>數量 ${item.qty}</span></div><strong>NT$ ${item.price * item.qty}</strong></div>`
   ).join('');
 }
 
+function removeUnavailableCartItems() {
+  if (!locationSelect?.value) return;
+  let removed = false;
+  cart.forEach((item, key) => {
+    if (item.locationsConfigured && !item.locations.includes(locationSelect.value)) {
+      cart.delete(key);
+      removed = true;
+    }
+  });
+  if (removed) {
+    updateCart();
+    showToast('已移除此地點未供應的餐點');
+  }
+}
+
+document.querySelectorAll('.meal-option').forEach(select => {
+  select.addEventListener('change', () => {
+    const option = select.selectedOptions[0];
+    select.closest('.meal-card').querySelector('.meal-price').textContent = `NT$ ${option.dataset.price}`;
+  });
+});
+
 document.querySelectorAll('.add-button').forEach(button => button.addEventListener('click', () => {
-  const id = button.dataset.id;
-  const current = cart.get(id) || {name: button.dataset.name, price: Number(button.dataset.price), qty: 0};
+  const card = button.closest('.meal-card');
+  const option = card.querySelector('.meal-option')?.selectedOptions[0];
+  const optionName = option?.value || '';
+  const key = `${button.dataset.id}::${optionName}`;
+  const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
   current.qty++;
-  cart.set(id, current);
+  cart.set(key, current);
   updateCart();
   showToast(`已加入 ${current.name}`);
 }));
@@ -95,7 +125,7 @@ document.querySelector('#checkoutButton').addEventListener('click', () => {
     showToast('目前沒有可下單的日期與地點');
     return;
   }
-  document.querySelector('#itemsJson').value = JSON.stringify([...cart.entries()].map(([id, item]) => ({id, qty: item.qty})));
+  document.querySelector('#itemsJson').value = JSON.stringify([...cart.values()].map(item => ({id: item.mealId, option_name: item.optionName, qty: item.qty})));
   document.querySelector('#orderLocation').value = locationSelect.value;
   document.querySelector('#orderDate').value = dateSelect.value;
   document.querySelector('#orderDateDisplay').value = dateSelect.value;

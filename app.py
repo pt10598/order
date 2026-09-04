@@ -261,7 +261,14 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  for row in requested:
   meal=get_item("meals",str(row.get("id",""))); qty=max(0,min(int(row.get("qty",0)),20))
   if not meal or not meal.get("active",True) or not qty:continue
-  price=int(meal.get("price",0)); items.append({"meal_id":meal["id"],"name":meal["name"],"price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
+  allowed_locations=meal.get("location_ids") or []
+  if meal.get("locations_configured") and location_id not in allowed_locations:continue
+  options=meal.get("options") or []; selected_option=str(row.get("option_name","")).strip(); option=None
+  if options:
+   option=next((item for item in options if item.get("name")==selected_option),None)
+   if not option:continue
+  price=int(option.get("price",0) if option else meal.get("price",0)); display_name=f"{meal['name']}（{option['name']}）" if option else meal["name"]
+  items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  schedule=get_schedule(pickup_date,location_id)
  if not items or not schedule:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇開放中的日期與取餐地點。")
  if pickup_time not in schedule.get("pickup_slots",[]):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
@@ -353,19 +360,38 @@ async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,
 @app.get("/admin/menu",response_class=HTMLResponse)
 async def admin_menu(request:Request,edit:str|None=None):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- return render(request,"admin_menu.html",meals=list_collection("meals"),editing=get_item("meals",edit) if edit else None)
+ return render(request,"admin_menu.html",meals=list_collection("meals"),editing=get_item("meals",edit) if edit else None,locations=list_collection("locations"))
 
 async def upload_image(file):
- if not file or not file.filename or not os.getenv("CLOUDINARY_URL"):return None
- import cloudinary,cloudinary.uploader
- cloudinary.config(cloudinary_url=os.getenv("CLOUDINARY_URL"),secure=True)
- result=cloudinary.uploader.upload(await file.read(),folder="airita-menu",resource_type="image"); return result.get("secure_url")
+ if not file or not file.filename:return None
+ raw=await file.read()
+ if not raw:return None
+ if os.getenv("CLOUDINARY_URL"):
+  import cloudinary,cloudinary.uploader
+  cloudinary.config(cloudinary_url=os.getenv("CLOUDINARY_URL"),secure=True)
+  result=cloudinary.uploader.upload(raw,folder="airita-menu",resource_type="image"); return result.get("secure_url")
+ from io import BytesIO
+ from PIL import Image,ImageOps
+ try:
+  image=Image.open(BytesIO(raw)); image=ImageOps.exif_transpose(image); image.thumbnail((1200,1200))
+  if image.mode not in ("RGB","L"):image=image.convert("RGB")
+  output=BytesIO(); image.save(output,format="JPEG",quality=78,optimize=True)
+  if output.tell()>600000:
+   image.thumbnail((850,850)); output=BytesIO(); image.save(output,format="JPEG",quality=65,optimize=True)
+  if output.tell()>650000:return None
+  return "data:image/jpeg;base64,"+base64.b64encode(output.getvalue()).decode()
+ except Exception as exc:
+  print(f"Image processing failed: {exc}"); return None
 
 @app.post("/admin/menu/save")
-async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),store:str=Form(...),category:str=Form(...),description:str=Form(""),price:int=Form(...),image_url:str=Form(""),image_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99)):
+async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),store:str=Form(...),category:str=Form(...),description:str=Form(""),price:int=Form(...),image_url:str=Form(""),image_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99),location_ids:list[str]=Form([]),option_1_name:str=Form(""),option_1_price:int=Form(0),option_2_name:str=Form(""),option_2_price:int=Form(0)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  meal_id=meal_id or f"meal-{secrets.token_hex(4)}"; existing=get_item("meals",meal_id) or {}; uploaded=await upload_image(image_file)
- save_item("meals",meal_id,{"name":name.strip(),"store":store.strip(),"category":category.strip(),"description":description.strip(),"price":max(price,0),"image_url":uploaded or image_url.strip() or existing.get("image_url",""),"active":active=="on","sort":sort})
+ options=[]
+ for option_name,option_price in ((option_1_name,option_1_price),(option_2_name,option_2_price)):
+  if option_name.strip():options.append({"name":option_name.strip(),"price":max(option_price,0)})
+ valid_location_ids={item["id"] for item in list_collection("locations")}; selected_locations=[item for item in location_ids if item in valid_location_ids]
+ save_item("meals",meal_id,{"name":name.strip(),"store":store.strip(),"category":category.strip(),"description":description.strip(),"price":max(price,0),"image_url":uploaded or image_url.strip() or existing.get("image_url",""),"location_ids":selected_locations,"locations_configured":True,"options":options,"active":active=="on","sort":sort})
  return RedirectResponse("/admin/menu",status_code=303)
 
 @app.post("/admin/menu/{meal_id}/toggle")
