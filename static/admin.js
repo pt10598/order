@@ -1,4 +1,4 @@
-const carrierPattern = /\/[A-Z0-9]{7}/;
+const carrierPattern = /\/[0-9A-Z.+-]{7}/;
 
 function loadBarcodeLibrary() {
   if (window.JsBarcode) return Promise.resolve();

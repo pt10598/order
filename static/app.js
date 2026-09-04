@@ -112,7 +112,7 @@ function updateInvoiceFields() {
   const useMobile = invoiceType.value === 'mobile';
   mobileBarcodeField.hidden = !useMobile;
   mobileBarcodeSuffix.required = useMobile;
-  mobileBarcodeSuffix.pattern = useMobile ? '[A-Z0-9]{7}' : '';
+  mobileBarcodeSuffix.pattern = useMobile ? '[0-9A-Z.+-]{7}' : '';
   if (!useMobile) {
     mobileBarcodeSuffix.value = '';
     mobileBarcode.value = '';
@@ -120,7 +120,7 @@ function updateInvoiceFields() {
 }
 invoiceType.addEventListener('change', updateInvoiceFields);
 mobileBarcodeSuffix.addEventListener('input', () => {
-  const suffix = mobileBarcodeSuffix.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+  const suffix = mobileBarcodeSuffix.value.toUpperCase().replace(/[^0-9A-Z.+-]/g, '').slice(0, 7);
   mobileBarcodeSuffix.value = suffix;
   mobileBarcode.value = suffix ? `/${suffix}` : '';
 });

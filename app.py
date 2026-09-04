@@ -229,7 +229,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
  if invoice_type not in {"physical","mobile"}:return render(request,"message.html",title="發票方式錯誤",message="請重新選擇發票開立方式。")
  mobile_barcode=mobile_barcode.strip().upper()
- if invoice_type=="mobile" and not re.fullmatch(r"/[A-Z0-9]{7}",mobile_barcode):return render(request,"message.html",title="手機載具格式錯誤",message="請輸入 / 加上 7 碼大寫英文或數字，例如 /ABC1234。")
+ if invoice_type=="mobile" and not re.fullmatch(r"/[0-9A-Z.+-]{7}",mobile_barcode):return render(request,"message.html",title="手機載具格式錯誤",message="請輸入 / 加上 7 碼大寫英文、數字或 + - . 符號，例如 /ABC+123。")
  try:requested=json.loads(items_json)
  except json.JSONDecodeError:requested=[]
  items=[]; total=0
