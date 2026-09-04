@@ -24,6 +24,7 @@
         <div><input id="lookupPhone" name="phone" value="{{ phone }}" inputmode="tel" autocomplete="tel" maxlength="12" placeholder="0912345678" required><button type="submit">查詢訂單</button></div>
       </form>
       {% if error %}<div class="lookup-error">{{ error }}</div>{% endif %}
+      {% if success %}<div class="lookup-success">{{ success }}</div>{% endif %}
     </section>
 
     {% if searched %}
@@ -36,6 +37,7 @@
         <ul>{% for item in order['items'] %}<li><span>{{ item.name }} × {{ item.qty }}</span><b>NT$ {{ item.subtotal }}</b></li>{% endfor %}</ul>
         {% if order.note %}<p class="customer-order-note">備註：{{ order.note }}</p>{% endif %}
         <div class="customer-order-total"><span>訂單金額</span><strong>NT$ {{ order.total }}</strong></div>
+        {% if order.status not in ['picked_up','cancelled'] %}<form method="post" action="/orders/{{ order.id }}/cancel" class="customer-cancel-form" onsubmit="return confirm('確定要取消訂單 {{ order.id }} 嗎？取消後無法自行恢復。')"><input type="hidden" name="phone" value="{{ phone }}"><input type="hidden" name="cancel_token" value="{{ order.cancel_token }}"><button type="submit">取消這筆訂單</button></form>{% endif %}
       </article>
       {% else %}<div class="lookup-empty"><strong>找不到訂單</strong><p>請確認手機號碼是否與下單時填寫的一致。</p></div>{% endfor %}
     </section>

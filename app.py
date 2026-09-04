@@ -9,13 +9,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from firebase_admin import credentials, firestore
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
+SESSION_SECRET=os.getenv("SESSION_SECRET",secrets.token_urlsafe(48))
 app = FastAPI(title="艾瑞塔園區訂餐")
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(48)), https_only=bool(os.getenv("DYNO")), same_site="lax")
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, https_only=bool(os.getenv("DYNO")), same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+cancel_serializer=URLSafeTimedSerializer(SESSION_SECRET,salt="customer-order-cancel")
 TAIPEI_TZ=timezone(timedelta(hours=8))
 
 def taipei_datetime(value):
@@ -134,6 +137,12 @@ def list_orders_by_phone(phone):
  else:rows=[order.copy() for order in memory.orders.values() if order.get("phone")==phone]
  return sorted(rows,key=lambda x:x.get("created_at",""),reverse=True)
 
+def customer_orders(phone):
+ rows=list_orders_by_phone(phone)
+ for order in rows:
+  order["cancel_token"]=cancel_serializer.dumps({"order_id":order["id"],"phone":phone})
+ return rows
+
 def line_configured():
  return bool(os.getenv("LINE_CHANNEL_SECRET") and os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
 
@@ -213,14 +222,30 @@ async def home(request:Request):
 
 @app.get("/order-lookup",response_class=HTMLResponse)
 async def order_lookup_page(request:Request):
- return render(request,"order_lookup.html",orders=[],phone="",searched=False,error=None)
+ return render(request,"order_lookup.html",orders=[],phone="",searched=False,error=None,success=None)
 
 @app.post("/order-lookup",response_class=HTMLResponse)
 async def order_lookup(request:Request,phone:str=Form(...)):
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):
-  return render(request,"order_lookup.html",orders=[],phone=phone,searched=False,error="請輸入正確的 10 碼手機號碼，例如 0912345678。")
- return render(request,"order_lookup.html",orders=list_orders_by_phone(phone),phone=phone,searched=True,error=None)
+  return render(request,"order_lookup.html",orders=[],phone=phone,searched=False,error="請輸入正確的 10 碼手機號碼，例如 0912345678。",success=None)
+ return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error=None,success=None)
+
+@app.post("/orders/{oid}/cancel",response_class=HTMLResponse)
+async def customer_cancel_order(request:Request,background_tasks:BackgroundTasks,oid:str,phone:str=Form(...),cancel_token:str=Form(...)):
+ phone=re.sub(r"\D","",phone)
+ try:token_data=cancel_serializer.loads(cancel_token,max_age=1800)
+ except SignatureExpired:return render(request,"message.html",title="取消連結已逾時",message="請回到訂單查詢頁重新查詢後再取消。")
+ except BadSignature:return render(request,"message.html",title="無法取消訂單",message="取消驗證資料不正確，請重新查詢訂單。")
+ if token_data.get("order_id")!=oid or token_data.get("phone")!=phone:return render(request,"message.html",title="無法取消訂單",message="訂單資料不一致，請重新查詢。")
+ order=get_order(oid)
+ if not order or order.get("phone")!=phone:return render(request,"message.html",title="找不到訂單",message="請確認手機號碼與訂單資料。")
+ if order.get("status") in {"picked_up","cancelled"}:return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error="此訂單已取餐或已取消，無法再次取消。",success=None)
+ now=datetime.now(timezone.utc).isoformat()
+ if db:db.collection("orders").document(oid).set({"status":"cancelled","cancelled_by":"customer","cancelled_at":now,"updated_at":now},merge=True)
+ elif oid in memory.orders:memory.orders[oid].update({"status":"cancelled","cancelled_by":"customer","cancelled_at":now,"updated_at":now})
+ background_tasks.add_task(send_status_notification,oid,order,"cancelled")
+ return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error=None,success=f"訂單 {oid} 已成功取消，管理員將收到通知。")
 
 @app.post("/orders")
 async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),mobile_barcode:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
