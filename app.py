@@ -1,10 +1,10 @@
-import base64, json, os, re, secrets
+import base64, hashlib, hmac, json, os, re, secrets, urllib.error, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import firebase_admin
-from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -118,6 +118,41 @@ def list_orders_by_phone(phone):
  else:rows=[order.copy() for order in memory.orders.values() if order.get("phone")==phone]
  return sorted(rows,key=lambda x:x.get("created_at",""),reverse=True)
 
+def line_configured():
+ return bool(os.getenv("LINE_CHANNEL_SECRET") and os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
+
+def ensure_line_pairing_code():
+ settings=get_settings()
+ if settings.get("line_group_id"):return ""
+ code=settings.get("line_pairing_code")
+ if not code:
+  code=secrets.token_hex(3).upper(); save_settings({"line_pairing_code":code})
+ return code
+
+def push_line_message(to,text):
+ token=os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+ if not token or not to:return
+ payload=json.dumps({"to":to,"messages":[{"type":"text","text":text}]},ensure_ascii=False).encode()
+ request=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,headers={"Authorization":f"Bearer {token}","Content-Type":"application/json"},method="POST")
+ try:
+  with urllib.request.urlopen(request,timeout=10) as response:response.read()
+ except (urllib.error.URLError,urllib.error.HTTPError,TimeoutError) as exc:print(f"LINE push failed: {exc}")
+
+def send_order_notification(oid,order):
+ group_id=get_settings().get("line_group_id")
+ if not group_id:return
+ item_lines="\n".join(f"・{item['name']} × {item['qty']}　NT$ {item['subtotal']}" for item in order["items"])
+ note=f"\n備註：{order['note']}" if order.get("note") else ""
+ message=(f"🍱 新訂單通知\n"
+          f"訂單編號：{oid}\n"
+          f"訂購人：{order['customer_name']}\n"
+          f"手機：{order['phone']}\n"
+          f"取餐日期：{order['pickup_date']}\n"
+          f"取餐地點：{order['location_name']}\n"
+          f"取餐時間：{order['pickup_time']}\n\n"
+          f"{item_lines}\n\n合計：NT$ {order['total']}{note}")
+ push_line_message(group_id,message[:5000])
+
 def seed_database():
  if not db:return
  if not next(db.collection("meals").limit(1).stream(),None):
@@ -155,7 +190,7 @@ async def order_lookup(request:Request,phone:str=Form(...)):
  return render(request,"order_lookup.html",orders=list_orders_by_phone(phone),phone=phone,searched=True,error=None)
 
 @app.post("/orders")
-async def submit_order(request:Request,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
+async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
@@ -169,8 +204,32 @@ async def submit_order(request:Request,customer_name:str=Form(...),phone:str=For
  schedule=get_schedule(pickup_date,location_id)
  if not items or not schedule:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇開放中的日期與取餐地點。")
  if pickup_time not in schedule.get("pickup_slots",[]):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
- now=datetime.now(timezone.utc).isoformat(); oid=create_order({"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now})
+ now=datetime.now(timezone.utc).isoformat(); order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
+ background_tasks.add_task(send_order_notification,oid,order)
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
+
+@app.post("/line/webhook")
+async def line_webhook(request:Request):
+ secret=os.getenv("LINE_CHANNEL_SECRET")
+ if not secret:return HTMLResponse("LINE is not configured",status_code=503)
+ body=await request.body(); signature=request.headers.get("x-line-signature","")
+ expected=base64.b64encode(hmac.new(secret.encode(),body,hashlib.sha256).digest()).decode()
+ if not hmac.compare_digest(signature,expected):return HTMLResponse("Invalid signature",status_code=400)
+ try:payload=json.loads(body)
+ except json.JSONDecodeError:return HTMLResponse("Invalid JSON",status_code=400)
+ for event in payload.get("events",[]):
+  source=event.get("source",{})
+  if source.get("type")=="group" and source.get("groupId"):
+   group_id=source["groupId"]
+   settings=get_settings()
+   if event.get("type")=="leave" and settings.get("line_group_id")==group_id:save_settings({"line_group_id":"","line_pairing_code":""})
+   elif event.get("type")=="message" and event.get("message",{}).get("type")=="text":
+    pairing_code=settings.get("line_pairing_code","")
+    expected_text=f"啟用訂單通知 {pairing_code}" if pairing_code else ""
+    if not settings.get("line_group_id") and expected_text and event["message"].get("text","").strip()==expected_text:
+     save_settings({"line_group_id":group_id,"line_group_connected_at":datetime.now(timezone.utc).isoformat(),"line_pairing_code":""})
+     push_line_message(group_id,"✅ 艾瑞塔訂單通知已連接\n之後有新訂單時，系統會自動通知此群組。")
+ return {"ok":True}
 
 @app.get("/orders/{oid}/success",response_class=HTMLResponse)
 async def order_success(request:Request,oid:str):
@@ -231,7 +290,9 @@ async def menu_toggle(request:Request,meal_id:str):
 @app.get("/admin/settings",response_class=HTMLResponse)
 async def admin_settings(request:Request):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- return render(request,"admin_settings.html",settings=get_settings(),locations=list_collection("locations"),schedules=list_schedules())
+ configured=line_configured()
+ if configured:ensure_line_pairing_code()
+ return render(request,"admin_settings.html",settings=get_settings(),locations=list_collection("locations"),schedules=list_schedules(),line_configured=configured)
 
 @app.post("/admin/settings")
 async def settings_save(request:Request,headline:str=Form(...),ordering_open:str|None=Form(None)):

@@ -10,6 +10,7 @@ Python FastAPI + Google Firestore 的可收單版本。
 - 管理員帳密登入
 - 後台查看訂單與更新狀態
 - 客人可用下單手機號碼查詢訂單內容與處理狀態
+- LINE 官方帳號加入群組後，新訂單自動推送群組通知
 - 新增、修改、上下架餐點
 - 新增多個取餐日期
 - 每個日期分別設定地點、時間點及開放／停用
@@ -31,6 +32,8 @@ Python FastAPI + Google Firestore 的可收單版本。
 | `ADMIN_USERNAME` | 建議 `airita-admin` |
 | `ADMIN_PASSWORD` | 自行設定的強密碼，不要寫入 GitHub |
 | `SESSION_SECRET` | 自行產生的長隨機字串 |
+| `LINE_CHANNEL_SECRET` | LINE Messaging API 的 Channel secret |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API 的長效 Channel access token |
 
 選用：`CLOUDINARY_URL`，設定後後台可直接上傳餐點圖片。
 
@@ -40,8 +43,14 @@ Python FastAPI + Google Firestore 的可收單版本。
 
 Heroku 與 GitHub 自動部署連接後，推送到 `main` 即可重新部署。
 
+## LINE 群組通知啟用方式
+
+1. 部署新版後，在 LINE Developers 將 Webhook URL 設為 `https://你的網域/line/webhook` 並開啟 Use webhook。
+2. 驗證 Webhook 成功後，開啟允許官方帳號加入群組。
+3. 登入 `/admin/settings` 查看一次性群組連接指令。
+4. 將官方帳號邀請進通知群組，在群組貼上該指令；收到連接成功訊息後即可測試下單。
+
 ## 目前尚未加入
 
 - LINE Login（下一階段需要 LINE Developers Channel ID 與 Secret）
-- LINE 訂單通知
 - 線上付款
