@@ -99,6 +99,23 @@ document.querySelector('#checkoutButton').addEventListener('click', () => {
   document.querySelector('#orderLocation').value = locationSelect.value;
   document.querySelector('#orderDate').value = dateSelect.value;
   document.querySelector('#orderDateDisplay').value = dateSelect.value;
+  document.querySelector('#orderLocationDisplay').value = selectedSchedule().location_name;
   cartDialog.showModal();
 });
 document.querySelector('#closeDialog').addEventListener('click', () => cartDialog.close());
+
+document.querySelector('#orderForm').addEventListener('submit', (event) => {
+  const schedule = selectedSchedule();
+  const pickupTime = document.querySelector('#pickupTimeSelect').value;
+  const total = document.querySelector('#dialogTotal').textContent;
+  const confirmed = window.confirm(
+    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${schedule?.location_name || ''}\n取餐時間：${pickupTime}\n訂單金額：${total}\n\n確認送出訂單嗎？`
+  );
+  if (!confirmed) {
+    event.preventDefault();
+    return;
+  }
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.textContent = '訂單送出中…';
+});
