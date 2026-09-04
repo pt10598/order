@@ -107,18 +107,22 @@ document.querySelector('#closeDialog').addEventListener('click', () => cartDialo
 const invoiceType = document.querySelector('#invoiceType');
 const mobileBarcodeField = document.querySelector('#mobileBarcodeField');
 const mobileBarcode = document.querySelector('#mobileBarcode');
+const mobileBarcodeSuffix = document.querySelector('#mobileBarcodeSuffix');
 function updateInvoiceFields() {
   const useMobile = invoiceType.value === 'mobile';
   mobileBarcodeField.hidden = !useMobile;
-  mobileBarcode.required = useMobile;
-  mobileBarcode.pattern = useMobile ? '/[A-Z0-9]{7}' : '';
-  if (!useMobile) mobileBarcode.value = '';
+  mobileBarcodeSuffix.required = useMobile;
+  mobileBarcodeSuffix.pattern = useMobile ? '[A-Z0-9]{7}' : '';
+  if (!useMobile) {
+    mobileBarcodeSuffix.value = '';
+    mobileBarcode.value = '';
+  }
 }
 invoiceType.addEventListener('change', updateInvoiceFields);
-mobileBarcode.addEventListener('input', () => {
-  let value = mobileBarcode.value.toUpperCase().replace(/[^A-Z0-9/]/g, '');
-  if (value && !value.startsWith('/')) value = `/${value.replaceAll('/', '')}`;
-  mobileBarcode.value = value.slice(0, 8);
+mobileBarcodeSuffix.addEventListener('input', () => {
+  const suffix = mobileBarcodeSuffix.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+  mobileBarcodeSuffix.value = suffix;
+  mobileBarcode.value = suffix ? `/${suffix}` : '';
 });
 updateInvoiceFields();
 
