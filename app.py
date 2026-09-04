@@ -153,6 +153,22 @@ def send_order_notification(oid,order):
           f"{item_lines}\n\n合計：NT$ {order['total']}{note}")
  push_line_message(group_id,message[:5000])
 
+def send_status_notification(oid,order,status):
+ group_id=get_settings().get("line_group_id")
+ if not group_id:return
+ labels={"new":"新訂單","confirmed":"已確認","completed":"已完成","cancelled":"已取消"}
+ icons={"new":"🆕","confirmed":"✅","completed":"🎉","cancelled":"❌"}
+ label=labels.get(status,status)
+ message=(f"{icons.get(status,'📌')} 訂單狀態更新\n"
+          f"訂單編號：{oid}\n"
+          f"目前狀態：{label}\n"
+          f"訂購人：{order.get('customer_name','')}\n"
+          f"手機：{order.get('phone','')}\n"
+          f"取餐日期：{order.get('pickup_date','')}\n"
+          f"取餐地點：{order.get('location_name','')}\n"
+          f"取餐時間：{order.get('pickup_time','')}")
+ push_line_message(group_id,message)
+
 def seed_database():
  if not db:return
  if not next(db.collection("meals").limit(1).stream(),None):
@@ -255,11 +271,15 @@ async def admin_dashboard(request:Request):
  orders=list_orders(); return render(request,"admin_dashboard.html",orders=orders,new_count=sum(x.get("status")=="new" for x in orders),database_connected=db is not None)
 
 @app.post("/admin/orders/{oid}/status")
-async def order_status(request:Request,oid:str,status:str=Form(...)):
+async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,status:str=Form(...)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  if status not in {"new","confirmed","completed","cancelled"}:status="new"
+ order=get_order(oid)
+ if not order:return RedirectResponse("/admin",status_code=303)
+ previous_status=order.get("status","new")
  if db:db.collection("orders").document(oid).set({"status":status,"updated_at":datetime.now(timezone.utc).isoformat()},merge=True)
  elif oid in memory.orders:memory.orders[oid]["status"]=status
+ if status!=previous_status:background_tasks.add_task(send_status_notification,oid,order,status)
  return RedirectResponse("/admin",status_code=303)
 
 @app.get("/admin/menu",response_class=HTMLResponse)
