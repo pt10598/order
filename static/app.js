@@ -98,10 +98,21 @@ function updateCart() {
   document.querySelector('#cartTotal').textContent = `NT$ ${total}`;
   document.querySelector('#dialogTotal').textContent = `NT$ ${total}`;
   cartBar.hidden = count === 0;
-  document.querySelector('#cartItems').innerHTML = items.map(item =>
-    `<div class="cart-line"><div><strong>${item.name}${item.optionName ? `（${item.optionName}）` : ''}</strong><br><span>數量 ${item.qty}</span></div><strong>NT$ ${item.price * item.qty}</strong></div>`
+  document.querySelector('#cartItems').innerHTML = [...cart.entries()].map(([key, item]) =>
+    `<div class="cart-line"><div><strong>${item.name}${item.optionName ? `（${item.optionName}）` : ''}</strong><label class="cart-qty-label">數量 <select class="cart-qty" data-cart-key="${encodeURIComponent(key)}">${Array.from({length: 10}, (_, index) => index + 1).map(qty => `<option value="${qty}"${qty === item.qty ? ' selected' : ''}>${qty}</option>`).join('')}</select></label></div><strong>NT$ ${item.price * item.qty}</strong></div>`
   ).join('');
 }
+
+document.querySelector('#cartItems').addEventListener('change', event => {
+  const select = event.target.closest('.cart-qty');
+  if (!select) return;
+  const key = decodeURIComponent(select.dataset.cartKey);
+  const item = cart.get(key);
+  if (!item) return;
+  item.qty = Math.max(1, Math.min(Number(select.value), 10));
+  cart.set(key, item);
+  updateCart();
+});
 
 function removeUnavailableCartItems() {
   if (!locationSelect?.value) return;
@@ -132,6 +143,10 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
   const optionName = option?.value || '';
   const key = `${button.dataset.id}::${optionName}`;
   const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, storeId: card.dataset.storeId, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
+  if (current.qty >= 10) {
+    showToast('每個餐點最多10份');
+    return;
+  }
   current.qty++;
   cart.set(key, current);
   updateCart();

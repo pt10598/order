@@ -283,7 +283,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  if not schedule:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇開放中的日期與取餐地點。")
  items=[]; total=0
  for row in requested:
-  meal=get_item("meals",str(row.get("id",""))); qty=max(0,min(int(row.get("qty",0)),20))
+  meal=get_item("meals",str(row.get("id",""))); qty=max(0,min(int(row.get("qty",0)),10))
   if not meal or not meal.get("active",True) or not qty:continue
   allowed_locations=meal.get("location_ids") or []
   if meal.get("locations_configured") and location_id not in allowed_locations:continue
