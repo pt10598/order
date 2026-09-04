@@ -10,3 +10,4 @@
 .checkout-form select{border:1px solid var(--line);border-radius:11px;padding:10px;font:inherit;background:#fff}.checkout-form label small{font-size:11px;color:var(--muted);font-weight:400}
 .checkout-form label[hidden]{display:none!important}
 .carrier-input{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#fff}.carrier-input span{display:grid;place-items:center;background:#edf1ef;padding:0 13px;font-size:20px;font-weight:800;color:var(--green);user-select:none}.checkout-form .carrier-input input{border:0;border-radius:0;min-width:0;flex:1}.checkout-form .carrier-input input:focus{outline:2px solid var(--green);outline-offset:-2px}
+.status-picked_up{background:#c6e8dc;color:#075a43}

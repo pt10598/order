@@ -1,5 +1,14 @@
 const carrierPattern = /\/[0-9A-Z.+-]{7}/;
 
+function updateStatusColor(select) {
+  select.dataset.status = select.value;
+}
+
+document.querySelectorAll('.status-select').forEach(select => {
+  updateStatusColor(select);
+  select.addEventListener('change', () => updateStatusColor(select));
+});
+
 function loadBarcodeLibrary() {
   if (window.JsBarcode) return Promise.resolve();
   return new Promise((resolve, reject) => {
