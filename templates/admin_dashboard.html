@@ -24,17 +24,17 @@
 {% if filters.view=='table' %}
 <div class="report-layout">
   <section class="panel report-table-panel" title="可拖曳右下角調整大小"><div class="table-scroll"><table class="order-table">
-    <thead><tr><th>下單時間</th><th>訂購人</th><th>訂單編號</th><th>品項</th><th>數量</th><th>總額</th><th>取餐資訊</th><th>發票</th><th>狀態</th></tr></thead>
+    <thead><tr><th><button type="button" class="table-sort" data-type="date">下單時間</button></th><th><button type="button" class="table-sort">訂購人</button></th><th><button type="button" class="table-sort">訂單編號</button></th><th><button type="button" class="table-sort">品項</button></th><th><button type="button" class="table-sort" data-type="number">數量</button></th><th><button type="button" class="table-sort" data-type="number">總額</button></th><th><button type="button" class="table-sort">取餐資訊</button></th><th><button type="button" class="table-sort">發票</button></th><th><button type="button" class="table-sort">狀態</button></th></tr></thead>
     <tbody>{% for order in orders %}<tr>
-      <td class="nowrap">{{ order.created_at|tw_datetime }}</td>
-      <td class="customer-cell"><b>{{ order.customer_name }}</b><a href="tel:{{ order.phone }}">{{ order.phone }}</a></td>
-      <td class="nowrap">{{ order.id }}</td>
-      <td>{% for item in order['items'] %}<div>{{ item.name }}</div>{% endfor %}</td>
-      <td>{% for item in order['items'] %}<div>{{ item.qty }}</div>{% endfor %}</td>
-      <td class="nowrap">NT$ {{ order.total }}</td>
-      <td>{{ order.pickup_date }}<br>{{ order.location_name }}<br>{{ order.pickup_time }}</td>
-      <td>{{ order.invoice_label|default('實體發票',true) }}</td>
-      <td><form method="post" action="/admin/orders/{{ order.id }}/status" class="table-status-form"><select class="status-select" name="status"><option value="new" {% if order.status=='new' %}selected{% endif %}>新訂單</option><option value="confirmed" {% if order.status=='confirmed' %}selected{% endif %}>已確認</option><option value="completed" {% if order.status=='completed' %}selected{% endif %}>已完成</option><option value="picked_up" {% if order.status=='picked_up' %}selected{% endif %}>已取餐</option><option value="cancelled" {% if order.status=='cancelled' %}selected{% endif %}>已取消</option></select><button>更新</button></form></td>
+      <td class="nowrap" data-sort-value="{{ order.created_at }}">{{ order.created_at|tw_datetime }}</td>
+      <td class="customer-cell" data-sort-value="{{ order.customer_name }}"><b>{{ order.customer_name }}</b><a href="tel:{{ order.phone }}">{{ order.phone }}</a></td>
+      <td class="nowrap" data-sort-value="{{ order.id }}">{{ order.id }}</td>
+      <td data-sort-value="{{ order['items'][0].name if order['items'] else '' }}">{% for item in order['items'] %}<div>{{ item.name }}</div>{% endfor %}</td>
+      <td data-sort-value="{{ order['items']|sum(attribute='qty') }}">{% for item in order['items'] %}<div>{{ item.qty }}</div>{% endfor %}</td>
+      <td class="nowrap" data-sort-value="{{ order.total }}">NT$ {{ order.total }}</td>
+      <td data-sort-value="{{ order.pickup_date }} {{ order.pickup_time }} {{ order.location_name }}">{{ order.pickup_date }}<br>{{ order.location_name }}<br>{{ order.pickup_time }}</td>
+      <td data-sort-value="{{ order.invoice_label|default('實體發票',true) }}">{{ order.invoice_label|default('實體發票',true) }}</td>
+      <td data-sort-value="{{ order.status }}"><form method="post" action="/admin/orders/{{ order.id }}/status" class="table-status-form"><select class="status-select" name="status"><option value="new" {% if order.status=='new' %}selected{% endif %}>新訂單</option><option value="confirmed" {% if order.status=='confirmed' %}selected{% endif %}>已確認</option><option value="completed" {% if order.status=='completed' %}selected{% endif %}>已完成</option><option value="picked_up" {% if order.status=='picked_up' %}selected{% endif %}>已取餐</option><option value="cancelled" {% if order.status=='cancelled' %}selected{% endif %}>已取消</option></select><button>更新</button></form></td>
     </tr>{% else %}<tr><td colspan="9" class="table-empty">目前條件沒有訂單。</td></tr>{% endfor %}</tbody>
   </table></div><span class="resize-hint">拖曳右下角可調整大小</span></section>
   <aside class="panel item-summary"><h2>餐點數量統計</h2><div class="item-summary-list">{% for name,qty in summary['item_counts'] %}<div><span>{{ name }}</span><b>{{ qty }}</b></div>{% else %}<p>目前沒有資料。</p>{% endfor %}</div><div class="item-summary-total"><span>總計</span><strong>{{ summary['items'] }}</strong></div></aside>

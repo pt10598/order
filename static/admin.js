@@ -9,6 +9,34 @@ document.querySelectorAll('.status-select').forEach(select => {
   select.addEventListener('change', () => updateStatusColor(select));
 });
 
+document.querySelectorAll('.order-table').forEach(table => {
+  const body = table.tBodies[0];
+  const buttons = [...table.querySelectorAll('.table-sort')];
+  buttons.forEach((button, columnIndex) => {
+    button.addEventListener('click', () => {
+      const nextDirection = button.dataset.direction === 'asc' ? 'desc' : 'asc';
+      buttons.forEach(other => {
+        delete other.dataset.direction;
+        other.removeAttribute('aria-sort');
+      });
+      button.dataset.direction = nextDirection;
+      button.setAttribute('aria-sort', nextDirection === 'asc' ? 'ascending' : 'descending');
+      const type = button.dataset.type || 'text';
+      const rows = [...body.rows].filter(row => !row.querySelector('.table-empty'));
+      rows.sort((rowA, rowB) => {
+        const valueA = rowA.cells[columnIndex]?.dataset.sortValue ?? rowA.cells[columnIndex]?.textContent.trim() ?? '';
+        const valueB = rowB.cells[columnIndex]?.dataset.sortValue ?? rowB.cells[columnIndex]?.textContent.trim() ?? '';
+        let result;
+        if (type === 'number') result = Number(valueA) - Number(valueB);
+        else if (type === 'date') result = new Date(valueA).getTime() - new Date(valueB).getTime();
+        else result = valueA.localeCompare(valueB, 'zh-Hant', {numeric: true, sensitivity: 'base'});
+        return nextDirection === 'asc' ? result : -result;
+      });
+      rows.forEach(row => body.appendChild(row));
+    });
+  });
+});
+
 function loadBarcodeLibrary() {
   if (window.JsBarcode) return Promise.resolve();
   return new Promise((resolve, reject) => {
