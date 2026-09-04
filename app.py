@@ -35,6 +35,7 @@ class MemoryStore:
  def __init__(self):
   self.meals={x["id"]:x.copy() for x in DEFAULT_MEALS}; self.locations={x["id"]:x.copy() for x in DEFAULT_LOCATIONS}; self.orders={}
   self.settings={"order_date":datetime.now().strftime("%Y-%m-%d"),"headline":"今日午餐","ordering_open":True}
+  self.schedules={f"schedule-{i+1}":{"id":f"schedule-{i+1}","date":self.settings["order_date"],"location_id":x["id"],"location_name":x["name"],"pickup_slots":x["pickup_slots"],"active":True,"sort":x["sort"]} for i,x in enumerate(DEFAULT_LOCATIONS)}
 memory=MemoryStore()
 
 def init_firestore():
@@ -79,6 +80,22 @@ def save_settings(data):
  if db:db.collection("settings").document("ordering").set(data,merge=True)
  else:memory.settings.update(data)
 
+def list_schedules(active_only=False):
+ if db:
+  rows=[]
+  for doc in db.collection("schedules").stream():
+   item=doc.to_dict() or {}; item["id"]=doc.id
+   if not active_only or item.get("active",True):rows.append(item)
+ else:rows=[x.copy() for x in memory.schedules.values() if not active_only or x.get("active",True)]
+ return sorted(rows,key=lambda x:(x.get("date",""),x.get("sort",999),x.get("location_name","")))
+
+def get_schedule(date,location_id):
+ return next((x for x in list_schedules(True) if x.get("date")==date and x.get("location_id")==location_id),None)
+
+def save_schedule(schedule_id,data):
+ if db:db.collection("schedules").document(schedule_id).set(data,merge=True)
+ else:memory.schedules[schedule_id]={"id":schedule_id,**data}
+
 def create_order(data):
  oid=datetime.now().strftime("%y%m%d")+"-"+secrets.token_hex(3).upper()
  if db:db.collection("orders").document(oid).set(data)
@@ -101,6 +118,10 @@ def seed_database():
  if not next(db.collection("locations").limit(1).stream(),None):
   for x in DEFAULT_LOCATIONS:save_item("locations",x["id"],{k:v for k,v in x.items() if k!="id"})
  if not db.collection("settings").document("ordering").get().exists:save_settings(memory.settings)
+ if not next(db.collection("schedules").limit(1).stream(),None):
+  settings=get_settings(); default_date=settings.get("order_date") or datetime.now().strftime("%Y-%m-%d")
+  for i,location in enumerate(list_collection("locations",True)):
+   save_schedule(f"schedule-{i+1}",{"date":default_date,"location_id":location["id"],"location_name":location["name"],"pickup_slots":pickup_slots_for(location),"active":True,"sort":location.get("sort",i+1)})
 
 def is_admin(request):return request.session.get("admin") is True
 def render(request,name,**context):return templates.TemplateResponse(request=request,name=name,context=context)
@@ -113,9 +134,7 @@ async def startup():seed_database()
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
- locations=list_collection("locations",True)
- for location in locations:location["pickup_slots"]=pickup_slots_for(location)
- return render(request,"index.html",meals=list_collection("meals",True),locations=locations,settings=get_settings())
+ return render(request,"index.html",meals=list_collection("meals",True),schedules=list_schedules(True),settings=get_settings())
 
 @app.post("/orders")
 async def submit_order(request:Request,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
@@ -127,10 +146,10 @@ async def submit_order(request:Request,customer_name:str=Form(...),phone:str=For
   meal=get_item("meals",str(row.get("id",""))); qty=max(0,min(int(row.get("qty",0)),20))
   if not meal or not meal.get("active",True) or not qty:continue
   price=int(meal.get("price",0)); items.append({"meal_id":meal["id"],"name":meal["name"],"price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
- loc=get_item("locations",location_id)
- if not items or not loc:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇餐點與取餐地點。")
- if pickup_time not in pickup_slots_for(loc):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
- now=datetime.now(timezone.utc).isoformat(); oid=create_order({"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":loc["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now})
+ schedule=get_schedule(pickup_date,location_id)
+ if not items or not schedule:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇開放中的日期與取餐地點。")
+ if pickup_time not in schedule.get("pickup_slots",[]):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
+ now=datetime.now(timezone.utc).isoformat(); oid=create_order({"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now})
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
 
 @app.get("/orders/{oid}/success",response_class=HTMLResponse)
@@ -192,12 +211,24 @@ async def menu_toggle(request:Request,meal_id:str):
 @app.get("/admin/settings",response_class=HTMLResponse)
 async def admin_settings(request:Request):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- return render(request,"admin_settings.html",settings=get_settings(),locations=list_collection("locations"))
+ return render(request,"admin_settings.html",settings=get_settings(),locations=list_collection("locations"),schedules=list_schedules())
 
 @app.post("/admin/settings")
-async def settings_save(request:Request,order_date:str=Form(...),headline:str=Form(...),ordering_open:str|None=Form(None)):
+async def settings_save(request:Request,headline:str=Form(...),ordering_open:str|None=Form(None)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- save_settings({"order_date":order_date,"headline":headline.strip(),"ordering_open":ordering_open=="on"}); return RedirectResponse("/admin/settings",status_code=303)
+ save_settings({"headline":headline.strip(),"ordering_open":ordering_open=="on"}); return RedirectResponse("/admin/settings",status_code=303)
+
+@app.post("/admin/schedules/save")
+async def schedule_save(request:Request,schedule_id:str=Form(""),date:str=Form(...),location_id:str=Form(...),pickup_slots:str=Form(...),active:str|None=Form(None),sort:int=Form(99)):
+ if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
+ location=get_item("locations",location_id)
+ if not location:return RedirectResponse("/admin/settings",status_code=303)
+ slots=[slot.strip() for slot in pickup_slots.replace("，",",").split(",") if slot.strip()]
+ if not slots:slots=DEFAULT_PICKUP_SLOTS
+ existing=next((item for item in list_schedules() if item.get("date")==date and item.get("location_id")==location_id),None)
+ schedule_id=schedule_id or (existing["id"] if existing else f"schedule-{secrets.token_hex(4)}")
+ save_schedule(schedule_id,{"date":date,"location_id":location_id,"location_name":location["name"],"pickup_slots":slots,"active":active=="on","sort":sort})
+ return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/locations/save")
 async def location_save(request:Request,location_id:str=Form(""),name:str=Form(...),pickup_slots:str=Form(...),active:str|None=Form(None),sort:int=Form(99)):

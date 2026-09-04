@@ -25,18 +25,31 @@ filters.forEach(button => button.addEventListener('click', () => {
 }));
 storeSelect.addEventListener('change', applyFilters);
 
-function updatePickupSlots() {
-  const locationSelect = document.querySelector('#locationSelect');
-  const option = locationSelect.selectedOptions[0];
-  if (!option) return;
-  let slots = [];
-  try { slots = JSON.parse(option.dataset.slots || '[]'); } catch (_) { slots = []; }
-  if (!slots.length) slots = ['11:30', '12:00', '12:30'];
-  document.querySelector('#pickupTime').textContent = `可選時間 ${slots.join('、')}`;
-  document.querySelector('#pickupTimeSelect').innerHTML = slots.map(slot => `<option value="${slot}">${slot}</option>`).join('');
+const schedules = window.ORDER_SCHEDULES || [];
+const dateSelect = document.querySelector('#dateSelect');
+const locationSelect = document.querySelector('#locationSelect');
+
+function selectedSchedule() {
+  return schedules.find(item => item.date === dateSelect.value && item.location_id === locationSelect.value);
 }
-document.querySelector('#locationSelect').addEventListener('change', updatePickupSlots);
-updatePickupSlots();
+
+function updatePickupSlots() {
+  const schedule = selectedSchedule();
+  const slots = schedule?.pickup_slots || [];
+  document.querySelector('#pickupTime').textContent = slots.length ? `可選時間 ${slots.join('、')}` : '目前沒有可選時段';
+  const slotSelect = document.querySelector('#pickupTimeSelect');
+  slotSelect.replaceChildren(...slots.map(slot => new Option(slot, slot)));
+}
+
+function updateLocations() {
+  const available = schedules.filter(item => item.date === dateSelect.value && item.active !== false);
+  locationSelect.replaceChildren(...available.map(item => new Option(item.location_name, item.location_id)));
+  updatePickupSlots();
+}
+
+dateSelect.addEventListener('change', updateLocations);
+locationSelect.addEventListener('change', updatePickupSlots);
+updateLocations();
 
 document.querySelectorAll('.date').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.date').forEach(item => item.classList.remove('active'));
@@ -78,8 +91,14 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
 }));
 
 document.querySelector('#checkoutButton').addEventListener('click', () => {
+  if (!dateSelect.value || !locationSelect.value || !selectedSchedule()) {
+    showToast('目前沒有可下單的日期與地點');
+    return;
+  }
   document.querySelector('#itemsJson').value = JSON.stringify([...cart.entries()].map(([id, item]) => ({id, qty: item.qty})));
-  document.querySelector('#orderLocation').value = document.querySelector('#locationSelect').value;
+  document.querySelector('#orderLocation').value = locationSelect.value;
+  document.querySelector('#orderDate').value = dateSelect.value;
+  document.querySelector('#orderDateDisplay').value = dateSelect.value;
   cartDialog.showModal();
 });
 document.querySelector('#closeDialog').addEventListener('click', () => cartDialog.close());
