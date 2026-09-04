@@ -1,4 +1,4 @@
-import base64, json, os, secrets
+import base64, json, os, re, secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -111,6 +111,13 @@ def list_orders():
  rows=([{"id":d.id,**(d.to_dict() or {})} for d in db.collection("orders").stream()] if db else list(memory.orders.values()))
  return sorted(rows,key=lambda x:x.get("created_at",""),reverse=True)
 
+def list_orders_by_phone(phone):
+ if db:
+  docs=db.collection("orders").where("phone","==",phone).stream()
+  rows=[{"id":doc.id,**(doc.to_dict() or {})} for doc in docs]
+ else:rows=[order.copy() for order in memory.orders.values() if order.get("phone")==phone]
+ return sorted(rows,key=lambda x:x.get("created_at",""),reverse=True)
+
 def seed_database():
  if not db:return
  if not next(db.collection("meals").limit(1).stream(),None):
@@ -136,9 +143,22 @@ async def startup():seed_database()
 async def home(request:Request):
  return render(request,"index.html",meals=list_collection("meals",True),schedules=list_schedules(True),settings=get_settings())
 
+@app.get("/order-lookup",response_class=HTMLResponse)
+async def order_lookup_page(request:Request):
+ return render(request,"order_lookup.html",orders=[],phone="",searched=False,error=None)
+
+@app.post("/order-lookup",response_class=HTMLResponse)
+async def order_lookup(request:Request,phone:str=Form(...)):
+ phone=re.sub(r"\D","",phone)
+ if not re.fullmatch(r"09\d{8}",phone):
+  return render(request,"order_lookup.html",orders=[],phone=phone,searched=False,error="請輸入正確的 10 碼手機號碼，例如 0912345678。")
+ return render(request,"order_lookup.html",orders=list_orders_by_phone(phone),phone=phone,searched=True,error=None)
+
 @app.post("/orders")
 async def submit_order(request:Request,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
+ phone=re.sub(r"\D","",phone)
+ if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
  try:requested=json.loads(items_json)
  except json.JSONDecodeError:requested=[]
  items=[]; total=0

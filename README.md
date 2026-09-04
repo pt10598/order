@@ -9,6 +9,7 @@ Python FastAPI + Google Firestore 的可收單版本。
 - Firestore 永久保存訂單、餐點、地點及設定
 - 管理員帳密登入
 - 後台查看訂單與更新狀態
+- 客人可用下單手機號碼查詢訂單內容與處理狀態
 - 新增、修改、上下架餐點
 - 新增多個取餐日期
 - 每個日期分別設定地點、時間點及開放／停用
@@ -18,6 +19,7 @@ Python FastAPI + Google Firestore 的可收單版本。
 ## 網址
 
 - 客戶訂餐：`/`
+- 客戶訂單查詢：`/order-lookup`
 - 管理後台：`/admin/login`
 - 健康檢查：`/health`
 
