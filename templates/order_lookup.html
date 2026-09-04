@@ -31,8 +31,8 @@
       <div class="lookup-heading"><h2>查詢結果</h2><span>共 {{ orders|length }} 筆</span></div>
       {% for order in orders %}
       <article class="customer-order-card">
-        <div class="customer-order-head"><div><small>訂單編號</small><strong>{{ order.id }}</strong></div><span class="status status-{{ order.status }}">{{ {'new':'新訂單','confirmed':'已確認','completed':'已完成','cancelled':'已取消'}.get(order.status,order.status) }}</span></div>
-        <div class="customer-order-info"><div><span>取餐日期</span><b>{{ order.pickup_date }}</b></div><div><span>取餐地點</span><b>{{ order.location_name }}</b></div><div><span>取餐時間</span><b>{{ order.pickup_time }}</b></div></div>
+        <div class="customer-order-head"><div><small>訂單編號</small><strong>{{ order.id }}</strong><small>下單時間：{{ order.created_at|tw_datetime }}</small></div><span class="status status-{{ order.status }}">{{ {'new':'新訂單','confirmed':'已確認','completed':'已完成','cancelled':'已取消'}.get(order.status,order.status) }}</span></div>
+        <div class="customer-order-info"><div><span>取餐日期</span><b>{{ order.pickup_date }}</b></div><div><span>取餐地點</span><b>{{ order.location_name }}</b></div><div><span>取餐時間</span><b>{{ order.pickup_time }}</b></div><div><span>發票</span><b>{{ order.invoice_label|default('實體發票',true) }}</b></div></div>
         <ul>{% for item in order['items'] %}<li><span>{{ item.name }} × {{ item.qty }}</span><b>NT$ {{ item.subtotal }}</b></li>{% endfor %}</ul>
         {% if order.note %}<p class="customer-order-note">備註：{{ order.note }}</p>{% endif %}
         <div class="customer-order-total"><span>訂單金額</span><strong>NT$ {{ order.total }}</strong></div>

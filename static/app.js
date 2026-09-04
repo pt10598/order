@@ -104,12 +104,30 @@ document.querySelector('#checkoutButton').addEventListener('click', () => {
 });
 document.querySelector('#closeDialog').addEventListener('click', () => cartDialog.close());
 
+const invoiceType = document.querySelector('#invoiceType');
+const mobileBarcodeField = document.querySelector('#mobileBarcodeField');
+const mobileBarcode = document.querySelector('#mobileBarcode');
+function updateInvoiceFields() {
+  const useMobile = invoiceType.value === 'mobile';
+  mobileBarcodeField.hidden = !useMobile;
+  mobileBarcode.required = useMobile;
+  mobileBarcode.pattern = useMobile ? '/[A-Z0-9]{7}' : '';
+  if (!useMobile) mobileBarcode.value = '';
+}
+invoiceType.addEventListener('change', updateInvoiceFields);
+mobileBarcode.addEventListener('input', () => {
+  let value = mobileBarcode.value.toUpperCase().replace(/[^A-Z0-9/]/g, '');
+  if (value && !value.startsWith('/')) value = `/${value.replaceAll('/', '')}`;
+  mobileBarcode.value = value.slice(0, 8);
+});
+updateInvoiceFields();
+
 document.querySelector('#orderForm').addEventListener('submit', (event) => {
   const schedule = selectedSchedule();
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
   const total = document.querySelector('#dialogTotal').textContent;
   const confirmed = window.confirm(
-    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${schedule?.location_name || ''}\n取餐時間：${pickupTime}\n訂單金額：${total}\n\n確認送出訂單嗎？`
+    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${schedule?.location_name || ''}\n取餐時間：${pickupTime}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
   );
   if (!confirmed) {
     event.preventDefault();

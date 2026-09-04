@@ -1,5 +1,5 @@
 import base64, hashlib, hmac, json, os, re, secrets, urllib.error, urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,22 @@ app = FastAPI(title="艾瑞塔園區訂餐")
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(48)), https_only=bool(os.getenv("DYNO")), same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+TAIPEI_TZ=timezone(timedelta(hours=8))
+
+def taipei_datetime(value):
+ if isinstance(value,datetime):dt=value
+ elif value:
+  try:dt=datetime.fromisoformat(str(value).replace("Z","+00:00"))
+  except ValueError:return None
+ else:return None
+ if dt.tzinfo is None:dt=dt.replace(tzinfo=timezone.utc)
+ return dt.astimezone(TAIPEI_TZ)
+
+def format_taipei_datetime(value):
+ dt=taipei_datetime(value)
+ return dt.strftime("%Y-%m-%d %H:%M") if dt else "—"
+
+templates.env.filters["tw_datetime"]=format_taipei_datetime
 
 DEFAULT_MEALS = [
  {"id":"meal-1","category":"簡餐","store":"艾瑞塔精選","name":"香烤雞腿風味餐","description":"主餐、時蔬與米飯的午餐組合","price":135,"image_url":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Taiwanese_Bento_Box_%40_Bao%2C_London.jpg?width=1280","active":True,"sort":1},
@@ -149,7 +165,8 @@ def send_order_notification(oid,order):
           f"手機：{order['phone']}\n"
           f"取餐日期：{order['pickup_date']}\n"
           f"取餐地點：{order['location_name']}\n"
-          f"取餐時間：{order['pickup_time']}\n\n"
+          f"取餐時間：{order['pickup_time']}\n"
+          f"發票：{order.get('invoice_label','實體發票')}\n\n"
           f"{item_lines}\n\n合計：NT$ {order['total']}{note}")
  push_line_message(group_id,message[:5000])
 
@@ -206,10 +223,13 @@ async def order_lookup(request:Request,phone:str=Form(...)):
  return render(request,"order_lookup.html",orders=list_orders_by_phone(phone),phone=phone,searched=True,error=None)
 
 @app.post("/orders")
-async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
+async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),mobile_barcode:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
+ if invoice_type not in {"physical","mobile"}:return render(request,"message.html",title="發票方式錯誤",message="請重新選擇發票開立方式。")
+ mobile_barcode=mobile_barcode.strip().upper()
+ if invoice_type=="mobile" and not re.fullmatch(r"/[A-Z0-9]{7}",mobile_barcode):return render(request,"message.html",title="手機載具格式錯誤",message="請輸入 / 加上 7 碼大寫英文或數字，例如 /ABC1234。")
  try:requested=json.loads(items_json)
  except json.JSONDecodeError:requested=[]
  items=[]; total=0
@@ -220,7 +240,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  schedule=get_schedule(pickup_date,location_id)
  if not items or not schedule:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇開放中的日期與取餐地點。")
  if pickup_time not in schedule.get("pickup_slots",[]):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
- now=datetime.now(timezone.utc).isoformat(); order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
+ now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","invoice_label":invoice_label,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
  background_tasks.add_task(send_order_notification,oid,order)
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
 
@@ -266,9 +286,32 @@ async def admin_login(request:Request,username:str=Form(...),password:str=Form(.
 async def admin_logout(request:Request):request.session.clear(); return RedirectResponse("/admin/login",status_code=303)
 
 @app.get("/admin",response_class=HTMLResponse)
-async def admin_dashboard(request:Request):
+async def admin_dashboard(request:Request,view:str="cards",start_date:str="",start_time:str="",end_date:str="",end_time:str="",status:str="",search:str="",sort:str="newest"):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- orders=list_orders(); return render(request,"admin_dashboard.html",orders=orders,new_count=sum(x.get("status")=="new" for x in orders),database_connected=db is not None)
+ all_orders=list_orders(); orders=[]
+ try:start_at=datetime.combine(datetime.strptime(start_date,"%Y-%m-%d").date(),datetime.strptime(start_time or "00:00","%H:%M").time()) if start_date else None
+ except ValueError:start_at=None
+ try:end_at=datetime.combine(datetime.strptime(end_date,"%Y-%m-%d").date(),datetime.strptime(end_time or "23:59","%H:%M").time()) if end_date else None
+ except ValueError:end_at=None
+ query=search.strip().lower()
+ for order in all_orders:
+  created=taipei_datetime(order.get("created_at")); local_created=created.replace(tzinfo=None) if created else None
+  if start_at and (not local_created or local_created<start_at):continue
+  if end_at and (not local_created or local_created>end_at):continue
+  if status and order.get("status")!=status:continue
+  haystack=" ".join(str(order.get(key,"")) for key in ("id","customer_name","phone","location_name")).lower()
+  if query and query not in haystack:continue
+  orders.append(order)
+ if sort=="oldest":orders.sort(key=lambda x:x.get("created_at",datetime.min.isoformat()))
+ elif sort=="pickup":orders.sort(key=lambda x:(x.get("pickup_date",""),x.get("pickup_time","")))
+ elif sort=="total_desc":orders.sort(key=lambda x:int(x.get("total",0)),reverse=True)
+ else:orders.sort(key=lambda x:x.get("created_at",""),reverse=True)
+ item_counts={}
+ for order in orders:
+  for item in order.get("items",[]):item_counts[item.get("name","未命名餐點")]=item_counts.get(item.get("name","未命名餐點"),0)+int(item.get("qty",0))
+ summary={"orders":len(orders),"items":sum(item_counts.values()),"revenue":sum(int(x.get("total",0)) for x in orders),"item_counts":sorted(item_counts.items(),key=lambda x:(-x[1],x[0]))}
+ filters={"view":view if view in {"cards","table"} else "cards","start_date":start_date,"start_time":start_time,"end_date":end_date,"end_time":end_time,"status":status,"search":search,"sort":sort}
+ return render(request,"admin_dashboard.html",orders=orders,new_count=sum(x.get("status")=="new" for x in all_orders),database_connected=db is not None,summary=summary,filters=filters)
 
 @app.post("/admin/orders/{oid}/status")
 async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,status:str=Form(...)):
