@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#152a24">
+  <title>艾瑞塔｜園區訂餐</title>
+  <meta name="description" content="多店家、多取餐地點的園區訂餐網站版型">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="回到首頁">
+      <span class="brand-mark">A</span>
+      <span><strong>艾瑞塔</strong><small>園區好食選</small></span>
+    </a>
+    <button class="icon-button" aria-label="通知">♡</button>
+  </header>
+
+  <main>
+    <section class="location-card">
+      <div>
+        <span class="eyebrow">取餐地點</span>
+        <select id="locationSelect" aria-label="選擇取餐地點">
+          {% for location in locations %}
+          <option value="{{ location.id }}" data-time="{{ location.time }}">{{ location.name }}</option>
+          {% endfor %}
+        </select>
+        <p id="pickupTime">今日取餐 11:30–13:00</p>
+      </div>
+      <span class="pin">⌖</span>
+    </section>
+
+    <section class="date-strip" aria-label="選擇日期">
+      <button class="date active"><small>今天</small><strong>04</strong><span>週五</span></button>
+      <button class="date"><small>明天</small><strong>05</strong><span>週六</span></button>
+      <button class="date"><small>週日</small><strong>06</strong><span>休息</span></button>
+      <button class="date"><small>週一</small><strong>07</strong><span>可預訂</span></button>
+    </section>
+
+    <section class="intro">
+      <div>
+        <span class="eyebrow">9/4 午餐</span>
+        <h1>今天想吃什麼？</h1>
+      </div>
+      <span class="open-pill">訂餐中</span>
+    </section>
+
+    <nav class="filters" aria-label="餐點分類">
+      <button class="filter active" data-filter="全部">全部</button>
+      <button class="filter" data-filter="簡餐">簡餐</button>
+      <button class="filter" data-filter="輕食">輕食</button>
+      <button class="filter" data-filter="沙拉">沙拉</button>
+      <button class="filter" data-filter="麵食">麵食</button>
+    </nav>
+
+    <section class="store-row">
+      <label for="storeSelect">供應店家</label>
+      <select id="storeSelect">
+        <option value="全部">全部店家</option>
+        {% for store in stores %}<option value="{{ store.name }}">{{ store.name }}｜{{ store.note }}</option>{% endfor %}
+      </select>
+    </section>
+
+    <section class="meal-grid" id="mealGrid">
+      {% for meal in meals %}
+      <article class="meal-card" data-category="{{ meal.category }}" data-store="{{ meal.store }}">
+        <div class="meal-image-wrap">
+          <img src="{{ meal.image }}" alt="{{ meal.name }}" class="meal-image" loading="lazy">
+          <button class="favorite" aria-label="收藏 {{ meal.name }}">♡</button>
+          <span class="category-tag">{{ meal.category }}</span>
+        </div>
+        <div class="meal-body">
+          <small>{{ meal.store }}</small>
+          <h2>{{ meal.name }}</h2>
+          <p>{{ meal.description }}</p>
+          <div class="meal-footer">
+            <strong>NT$ {{ meal.price }}</strong>
+            <button class="add-button" data-id="{{ meal.id }}" data-name="{{ meal.name }}" data-price="{{ meal.price }}">＋ 加入</button>
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    <p class="empty-state" id="emptyState" hidden>這個分類目前沒有餐點。</p>
+  </main>
+
+  <div class="cart-bar" id="cartBar" hidden>
+    <div><span id="cartCount">0</span><small>份餐點</small></div>
+    <strong id="cartTotal">NT$ 0</strong>
+    <button id="checkoutButton">查看購物車 →</button>
+  </div>
+
+  <nav class="bottom-nav" aria-label="主要選單">
+    <button class="active"><span>⌂</span>點餐</button>
+    <button><span>▤</span>訂單</button>
+    <button><span>○</span>我的</button>
+  </nav>
+
+  <dialog id="cartDialog">
+    <div class="dialog-head"><h2>購物車</h2><button id="closeDialog" aria-label="關閉">×</button></div>
+    <div id="cartItems"></div>
+    <div class="dialog-total"><span>合計</span><strong id="dialogTotal">NT$ 0</strong></div>
+    <button class="primary-button" id="demoCheckout">確認訂單（版型示意）</button>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="{{ url_for('static', path='/app.js') }}"></script>
+</body>
+</html>
