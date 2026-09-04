@@ -25,10 +25,11 @@ DEFAULT_MEALS = [
  {"id":"meal-5","category":"麵食","store":"每日好食","name":"古早味陽春麵","description":"清爽湯頭、青菜與肉片","price":95,"image_url":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Spring_Noodle_Soup_%28%E9%99%BD%E6%98%A5%E9%BA%B5%29_%282%29.jpg?width=1280","active":True,"sort":5},
 ]
 DEFAULT_LOCATIONS = [
- {"id":"zhubei","name":"竹北昌益園區","pickup_time":"11:30–13:00","active":True,"sort":1},
- {"id":"hsinchu","name":"新竹科學園區","pickup_time":"11:40–12:50","active":True,"sort":2},
- {"id":"zhunan","name":"竹南產業園區","pickup_time":"11:30–12:40","active":True,"sort":3},
+ {"id":"zhubei","name":"竹北昌益園區","pickup_time":"11:30–13:00","pickup_slots":["11:30","12:00","12:30","13:00"],"active":True,"sort":1},
+ {"id":"hsinchu","name":"新竹科學園區","pickup_time":"11:40–12:50","pickup_slots":["11:40","12:10","12:40"],"active":True,"sort":2},
+ {"id":"zhunan","name":"竹南產業園區","pickup_time":"11:30–12:40","pickup_slots":["11:30","12:00","12:30"],"active":True,"sort":3},
 ]
+DEFAULT_PICKUP_SLOTS=["11:30","12:00","12:30"]
 
 class MemoryStore:
  def __init__(self):
@@ -103,15 +104,21 @@ def seed_database():
 
 def is_admin(request):return request.session.get("admin") is True
 def render(request,name,**context):return templates.TemplateResponse(request=request,name=name,context=context)
+def pickup_slots_for(location):
+ slots=location.get("pickup_slots") if location else None
+ return slots if isinstance(slots,list) and slots else DEFAULT_PICKUP_SLOTS
 
 @app.on_event("startup")
 async def startup():seed_database()
 
 @app.get("/",response_class=HTMLResponse)
-async def home(request:Request):return render(request,"index.html",meals=list_collection("meals",True),locations=list_collection("locations",True),settings=get_settings())
+async def home(request:Request):
+ locations=list_collection("locations",True)
+ for location in locations:location["pickup_slots"]=pickup_slots_for(location)
+ return render(request,"index.html",meals=list_collection("meals",True),locations=locations,settings=get_settings())
 
 @app.post("/orders")
-async def submit_order(request:Request,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
+async def submit_order(request:Request,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  try:requested=json.loads(items_json)
  except json.JSONDecodeError:requested=[]
@@ -122,7 +129,8 @@ async def submit_order(request:Request,customer_name:str=Form(...),phone:str=For
   price=int(meal.get("price",0)); items.append({"meal_id":meal["id"],"name":meal["name"],"price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  loc=get_item("locations",location_id)
  if not items or not loc:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇餐點與取餐地點。")
- now=datetime.now(timezone.utc).isoformat(); oid=create_order({"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":loc["name"],"pickup_time":loc.get("pickup_time",""),"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now})
+ if pickup_time not in pickup_slots_for(loc):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
+ now=datetime.now(timezone.utc).isoformat(); oid=create_order({"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":loc["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now})
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
 
 @app.get("/orders/{oid}/success",response_class=HTMLResponse)
@@ -192,9 +200,11 @@ async def settings_save(request:Request,order_date:str=Form(...),headline:str=Fo
  save_settings({"order_date":order_date,"headline":headline.strip(),"ordering_open":ordering_open=="on"}); return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/locations/save")
-async def location_save(request:Request,location_id:str=Form(""),name:str=Form(...),pickup_time:str=Form(...),active:str|None=Form(None),sort:int=Form(99)):
+async def location_save(request:Request,location_id:str=Form(""),name:str=Form(...),pickup_slots:str=Form(...),active:str|None=Form(None),sort:int=Form(99)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- location_id=location_id or f"loc-{secrets.token_hex(4)}"; save_item("locations",location_id,{"name":name.strip(),"pickup_time":pickup_time.strip(),"active":active=="on","sort":sort}); return RedirectResponse("/admin/settings",status_code=303)
+ slots=[slot.strip() for slot in pickup_slots.replace("，",",").split(",") if slot.strip()]
+ if not slots:slots=DEFAULT_PICKUP_SLOTS
+ location_id=location_id or f"loc-{secrets.token_hex(4)}"; save_item("locations",location_id,{"name":name.strip(),"pickup_time":"、".join(slots),"pickup_slots":slots,"active":active=="on","sort":sort}); return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/locations/{location_id}/toggle")
 async def location_toggle(request:Request,location_id:str):

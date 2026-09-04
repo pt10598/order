@@ -25,10 +25,18 @@ filters.forEach(button => button.addEventListener('click', () => {
 }));
 storeSelect.addEventListener('change', applyFilters);
 
-document.querySelector('#locationSelect').addEventListener('change', event => {
-  const option = event.target.selectedOptions[0];
-  document.querySelector('#pickupTime').textContent = `取餐 ${option.dataset.time}`;
-});
+function updatePickupSlots() {
+  const locationSelect = document.querySelector('#locationSelect');
+  const option = locationSelect.selectedOptions[0];
+  if (!option) return;
+  let slots = [];
+  try { slots = JSON.parse(option.dataset.slots || '[]'); } catch (_) { slots = []; }
+  if (!slots.length) slots = ['11:30', '12:00', '12:30'];
+  document.querySelector('#pickupTime').textContent = `可選時間 ${slots.join('、')}`;
+  document.querySelector('#pickupTimeSelect').innerHTML = slots.map(slot => `<option value="${slot}">${slot}</option>`).join('');
+}
+document.querySelector('#locationSelect').addEventListener('change', updatePickupSlots);
+updatePickupSlots();
 
 document.querySelectorAll('.date').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.date').forEach(item => item.classList.remove('active'));
