@@ -27,7 +27,7 @@ storeSelect.addEventListener('change', applyFilters);
 
 document.querySelector('#locationSelect').addEventListener('change', event => {
   const option = event.target.selectedOptions[0];
-  document.querySelector('#pickupTime').textContent = `今日取餐 ${option.dataset.time}`;
+  document.querySelector('#pickupTime').textContent = `取餐 ${option.dataset.time}`;
 });
 
 document.querySelectorAll('.date').forEach(button => button.addEventListener('click', () => {
@@ -69,9 +69,9 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
   showToast(`已加入 ${current.name}`);
 }));
 
-document.querySelector('#checkoutButton').addEventListener('click', () => cartDialog.showModal());
-document.querySelector('#closeDialog').addEventListener('click', () => cartDialog.close());
-document.querySelector('#demoCheckout').addEventListener('click', () => {
-  cartDialog.close();
-  showToast('目前為版型預覽，尚未送出訂單');
+document.querySelector('#checkoutButton').addEventListener('click', () => {
+  document.querySelector('#itemsJson').value = JSON.stringify([...cart.entries()].map(([id, item]) => ({id, qty: item.qty})));
+  document.querySelector('#orderLocation').value = document.querySelector('#locationSelect').value;
+  cartDialog.showModal();
 });
+document.querySelector('#closeDialog').addEventListener('click', () => cartDialog.close());
