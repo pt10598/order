@@ -166,14 +166,16 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
   const optionName = option?.value || '';
   const key = `${button.dataset.id}::${optionName}`;
   const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, storeId: card.dataset.storeId, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
+  const addQty = Math.max(1, Math.min(Number(card.querySelector('.meal-add-qty')?.value || 1), 10));
   if (current.qty >= 10) {
     showToast('每個餐點最多10份');
     return;
   }
-  current.qty++;
+  const actualAdded = Math.min(addQty, 10 - current.qty);
+  current.qty += actualAdded;
   cart.set(key, current);
   updateCart();
-  showToast(`已加入 ${current.name}`);
+  showToast(actualAdded < addQty ? `已加入${actualAdded}份，累計上限10份` : `已加入 ${current.name} × ${actualAdded}`);
 }));
 
 document.querySelector('#checkoutButton').addEventListener('click', () => {
