@@ -468,9 +468,10 @@ async def location_toggle(request:Request,location_id:str):
  return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/stores/save")
-async def store_save(request:Request,store_id:str=Form(""),name:str=Form(...),active:str|None=Form(None),sort:int=Form(99)):
+async def store_save(request:Request,store_id:str=Form(""),name:str=Form(...),logo_url:str=Form(""),logo_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- store_id=store_id or stable_store_id(name); store_name=name.strip(); save_item("stores",store_id,{"name":store_name,"active":active=="on","sort":sort})
+ store_id=store_id or stable_store_id(name); store_name=name.strip(); existing=get_item("stores",store_id) or {}; uploaded=await upload_image(logo_file)
+ save_item("stores",store_id,{"name":store_name,"logo_url":uploaded or logo_url.strip() or existing.get("logo_url",""),"active":active=="on","sort":sort})
  for meal in list_collection("meals"):
   if meal.get("store_id")==store_id:save_item("meals",meal["id"],{"store":store_name})
  return RedirectResponse("/admin/settings",status_code=303)

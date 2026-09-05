@@ -1,16 +1,17 @@
 const cart = new Map();
 const filters = document.querySelectorAll('.filter');
 const cards = document.querySelectorAll('.meal-card');
-const storeSelect = document.querySelector('#storeSelect');
+const storePicker = document.querySelector('#storePicker');
 const cartBar = document.querySelector('#cartBar');
 const cartDialog = document.querySelector('#cartDialog');
 let activeCategory = '全部';
+let activeStore = '全部';
 
 function applyFilters() {
   let visible = 0;
   cards.forEach(card => {
     const categoryOk = activeCategory === '全部' || card.dataset.category === activeCategory;
-    const storeOk = storeSelect.value === '全部' || card.dataset.storeId === storeSelect.value;
+    const storeOk = activeStore === '全部' || card.dataset.storeId === activeStore;
     const scheduleStoreOk = availableStoreIds().includes(card.dataset.storeId);
     const configured = card.dataset.locationsConfigured === 'true';
     const locations = card.dataset.locations ? card.dataset.locations.split(',') : [];
@@ -27,8 +28,6 @@ filters.forEach(button => button.addEventListener('click', () => {
   activeCategory = button.dataset.filter;
   applyFilters();
 }));
-storeSelect.addEventListener('change', applyFilters);
-
 const schedules = window.ORDER_SCHEDULES || [];
 const stores = window.ORDER_STORES || [];
 const dateSelect = document.querySelector('#dateSelect');
@@ -56,12 +55,36 @@ function availableStoreIds() {
 }
 
 function updateStores() {
-  const previous = storeSelect.value;
+  const previous = activeStore;
   const allowed = new Set(availableStoreIds());
   const available = stores.filter(store => store.active !== false && allowed.has(store.id));
-  storeSelect.replaceChildren(new Option('全部店家', '全部'), ...available.map(store => new Option(store.name, store.id)));
-  if ([...storeSelect.options].some(option => option.value === previous)) storeSelect.value = previous;
+  if (previous !== '全部' && !available.some(store => store.id === previous)) activeStore = '全部';
+  const choices = [{id: '全部', name: '全部店家', logo_url: '/static/store-placeholder.svg'}, ...available];
+  storePicker.replaceChildren(...choices.map(store => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `store-choice${store.id === activeStore ? ' active' : ''}`;
+    button.dataset.storeId = store.id;
+    const logo = document.createElement('img');
+    logo.src = store.logo_url || '/static/store-placeholder.svg';
+    logo.alt = '';
+    logo.addEventListener('error', () => { logo.src = '/static/store-placeholder.svg'; }, {once: true});
+    const name = document.createElement('strong');
+    name.textContent = store.name;
+    button.append(logo, name);
+    button.addEventListener('click', () => {
+      activeStore = store.id;
+      storePicker.querySelectorAll('.store-choice').forEach(choice => choice.classList.toggle('active', choice.dataset.storeId === activeStore));
+      applyFilters();
+    });
+    return button;
+  }));
 }
+
+document.querySelectorAll('[data-meal-view]').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-meal-view]').forEach(item => item.classList.toggle('active', item === button));
+  document.querySelector('#mealGrid').classList.toggle('list-view', button.dataset.mealView === 'list');
+}));
 
 function updateLocations() {
   const available = schedules.filter(item => item.date === dateSelect.value && item.active !== false);
