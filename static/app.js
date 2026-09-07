@@ -229,17 +229,32 @@ const invoiceType = document.querySelector('#invoiceType');
 const mobileBarcodeField = document.querySelector('#mobileBarcodeField');
 const mobileBarcode = document.querySelector('#mobileBarcode');
 const mobileBarcodeSuffix = document.querySelector('#mobileBarcodeSuffix');
+const businessOption = new Option('開立統編發票／收據', 'business');
+invoiceType.add(businessOption);
+const taxIdField = document.createElement('label');
+taxIdField.id = 'taxIdField';
+taxIdField.hidden = true;
+taxIdField.innerHTML = '統一編號<input name="tax_id" id="taxId" inputmode="numeric" maxlength="8" pattern="[0-9]{8}" placeholder="請輸入8位數統編"><small>請輸入8位數字</small>';
+mobileBarcodeField.before(taxIdField);
+const taxId = document.querySelector('#taxId');
 function updateInvoiceFields() {
   const useMobile = invoiceType.value === 'mobile';
+  const useBusiness = invoiceType.value === 'business';
   mobileBarcodeField.hidden = !useMobile;
+  taxIdField.hidden = !useBusiness;
   mobileBarcodeSuffix.required = useMobile;
+  taxId.required = useBusiness;
   mobileBarcodeSuffix.pattern = useMobile ? '[0-9A-Z.+-]{7}' : '';
   if (!useMobile) {
     mobileBarcodeSuffix.value = '';
     mobileBarcode.value = '';
   }
+  if (!useBusiness) taxId.value = '';
 }
 invoiceType.addEventListener('change', updateInvoiceFields);
+taxId.addEventListener('input', () => {
+  taxId.value = taxId.value.replace(/\D/g, '').slice(0, 8);
+});
 mobileBarcodeSuffix.addEventListener('input', () => {
   const suffix = mobileBarcodeSuffix.value.toUpperCase().replace(/[^0-9A-Z.+-]/g, '').slice(0, 7);
   mobileBarcodeSuffix.value = suffix;
@@ -252,7 +267,7 @@ document.querySelector('#orderForm').addEventListener('submit', (event) => {
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
   const total = document.querySelector('#dialogTotal').textContent;
   const confirmed = window.confirm(
-    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${schedule?.location_name || ''}\n取餐時間：${pickupTime}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
+    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${schedule?.location_name || ''}\n取餐時間：${pickupTime}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
   );
   if (!confirmed) {
     event.preventDefault();

@@ -270,13 +270,15 @@ async def customer_cancel_order(request:Request,background_tasks:BackgroundTasks
  return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error=None,success=f"訂單 {oid} 已成功取消，管理員將收到通知。")
 
 @app.post("/orders")
-async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),mobile_barcode:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
+async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),mobile_barcode:str=Form(""),tax_id:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
- if invoice_type not in {"physical","mobile"}:return render(request,"message.html",title="發票方式錯誤",message="請重新選擇發票開立方式。")
+ if invoice_type not in {"physical","mobile","business"}:return render(request,"message.html",title="發票方式錯誤",message="請重新選擇發票開立方式。")
  mobile_barcode=mobile_barcode.strip().upper()
  if invoice_type=="mobile" and not re.fullmatch(r"/[0-9A-Z.+-]{7}",mobile_barcode):return render(request,"message.html",title="手機載具格式錯誤",message="請輸入 / 加上 7 碼大寫英文、數字或 + - . 符號，例如 /ABC+123。")
+ tax_id=re.sub(r"\D","",tax_id)
+ if invoice_type=="business" and not re.fullmatch(r"\d{8}",tax_id):return render(request,"message.html",title="統一編號格式錯誤",message="請輸入正確的8位數統一編號。")
  try:requested=json.loads(items_json)
  except json.JSONDecodeError:requested=[]
  schedule=get_schedule(pickup_date,location_id)
@@ -297,7 +299,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  if not items:return render(request,"message.html",title="訂單沒有送出",message="選擇的餐點在此日期或地點未供應，請重新選擇。")
  if pickup_time not in schedule.get("pickup_slots",[]):return render(request,"message.html",title="取餐時間無效",message="請重新選擇取餐時間。")
- now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","invoice_label":invoice_label,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
+ now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else f"統編發票／收據 {tax_id}" if invoice_type=="business" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":schedule["location_name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","tax_id":tax_id if invoice_type=="business" else "","invoice_label":invoice_label,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
  background_tasks.add_task(send_order_notification,oid,order)
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
 
