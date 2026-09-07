@@ -33,9 +33,40 @@ document.querySelectorAll('.order-table').forEach(table => {
         return nextDirection === 'asc' ? result : -result;
       });
       rows.forEach(row => body.appendChild(row));
+      sessionStorage.setItem('adminOrderSort', JSON.stringify({columnIndex, direction: nextDirection}));
     });
   });
+  try {
+    const savedSort = JSON.parse(sessionStorage.getItem('adminOrderSort') || 'null');
+    const savedButton = buttons[savedSort?.columnIndex];
+    if (savedButton) {
+      savedButton.dataset.direction = savedSort.direction === 'desc' ? 'asc' : 'desc';
+      savedButton.click();
+    }
+  } catch (error) {
+    sessionStorage.removeItem('adminOrderSort');
+  }
 });
+
+document.querySelectorAll('form[action*="/admin/orders/"][action$="/status"]').forEach(form => {
+  form.addEventListener('submit', () => {
+    let returnInput = form.querySelector('input[name="return_to"]');
+    if (!returnInput) {
+      returnInput = document.createElement('input');
+      returnInput.type = 'hidden';
+      returnInput.name = 'return_to';
+      form.appendChild(returnInput);
+    }
+    returnInput.value = `${location.pathname}${location.search}`;
+    sessionStorage.setItem('adminOrderScrollY', String(window.scrollY));
+  });
+});
+
+const savedScrollY = Number(sessionStorage.getItem('adminOrderScrollY'));
+if (Number.isFinite(savedScrollY) && savedScrollY > 0) {
+  requestAnimationFrame(() => window.scrollTo({top: savedScrollY}));
+  sessionStorage.removeItem('adminOrderScrollY');
+}
 
 function loadBarcodeLibrary() {
   if (window.JsBarcode) return Promise.resolve();

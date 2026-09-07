@@ -283,7 +283,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  if not schedule:return render(request,"message.html",title="訂單沒有送出",message="請重新選擇開放中的日期與取餐地點。")
  items=[]; total=0
  for row in requested:
-  meal=get_item("meals",str(row.get("id",""))); qty=max(0,min(int(row.get("qty",0)),10))
+  meal=get_item("meals",str(row.get("id",""))); qty=max(0,min(int(row.get("qty",0)),99))
   if not meal or not meal.get("active",True) or not qty:continue
   allowed_locations=meal.get("location_ids") or []
   if meal.get("locations_configured") and location_id not in allowed_locations:continue
@@ -368,10 +368,11 @@ async def admin_dashboard(request:Request,view:str="cards",start_date:str="",sta
   for item in order.get("items",[]):item_counts[item.get("name","未命名餐點")]=item_counts.get(item.get("name","未命名餐點"),0)+int(item.get("qty",0))
  summary={"orders":len(orders),"items":sum(item_counts.values()),"revenue":sum(int(x.get("total",0)) for x in orders),"item_counts":sorted(item_counts.items(),key=lambda x:(-x[1],x[0]))}
  filters={"view":view if view in {"cards","table"} else "cards","start_date":start_date,"start_time":start_time,"end_date":end_date,"end_time":end_time,"status":status,"search":search,"sort":sort}
- return render(request,"admin_dashboard.html",orders=orders,new_count=sum(x.get("status")=="new" for x in all_orders),database_connected=db is not None,summary=summary,filters=filters)
+ current_admin_url="/admin"+(f"?{request.url.query}" if request.url.query else "")
+ return render(request,"admin_dashboard.html",orders=orders,new_count=sum(x.get("status")=="new" for x in all_orders),database_connected=db is not None,summary=summary,filters=filters,current_admin_url=current_admin_url)
 
 @app.post("/admin/orders/{oid}/status")
-async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,status:str=Form(...)):
+async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,status:str=Form(...),return_to:str=Form("/admin")):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  if status not in {"new","confirmed","completed","picked_up","cancelled"}:status="new"
  order=get_order(oid)
@@ -380,7 +381,8 @@ async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,
  if db:db.collection("orders").document(oid).set({"status":status,"updated_at":datetime.now(timezone.utc).isoformat()},merge=True)
  elif oid in memory.orders:memory.orders[oid]["status"]=status
  if status!=previous_status and status=="cancelled":background_tasks.add_task(send_status_notification,oid,order,status)
- return RedirectResponse("/admin",status_code=303)
+ safe_return=return_to if return_to.startswith("/admin") and not return_to.startswith("//") else "/admin"
+ return RedirectResponse(safe_return,status_code=303)
 
 @app.get("/admin/menu",response_class=HTMLResponse)
 async def admin_menu(request:Request,edit:str|None=None):

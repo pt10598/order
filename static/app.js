@@ -7,6 +7,18 @@ const cartDialog = document.querySelector('#cartDialog');
 let activeCategory = '全部';
 let activeStore = '全部';
 
+function clampQty(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Math.max(1, Math.min(Number.isFinite(parsed) ? parsed : 1, 99));
+}
+
+document.querySelectorAll('.meal-add-qty').forEach(select => {
+  const stepper = document.createElement('div');
+  stepper.className = 'quantity-stepper';
+  stepper.innerHTML = '<button type="button" class="qty-minus" aria-label="減少數量">−</button><input class="meal-add-qty" type="number" value="1" min="1" max="99" inputmode="numeric" aria-label="輸入加入數量"><button type="button" class="qty-plus" aria-label="增加數量">＋</button>';
+  select.replaceWith(stepper);
+});
+
 function applyFilters() {
   let visible = 0;
   cards.forEach(card => {
@@ -122,34 +134,55 @@ function updateCart() {
   document.querySelector('#dialogTotal').textContent = `NT$ ${total}`;
   cartBar.hidden = count === 0;
   document.querySelector('#cartItems').innerHTML = [...cart.entries()].map(([key, item]) =>
-    `<div class="cart-line"><div><strong>${item.name}${item.optionName ? `（${item.optionName}）` : ''}</strong><label class="cart-qty-label">數量 <select class="cart-qty" data-cart-key="${encodeURIComponent(key)}">${Array.from({length: 10}, (_, index) => index + 1).map(qty => `<option value="${qty}"${qty === item.qty ? ' selected' : ''}>${qty}</option>`).join('')}</select></label></div><strong>NT$ ${item.price * item.qty}</strong></div>`
+    `<div class="cart-line"><div class="cart-line-main"><strong>${item.name}${item.optionName ? `（${item.optionName}）` : ''}</strong><div class="cart-actions"><div class="quantity-stepper"><button type="button" class="qty-minus" data-cart-key="${encodeURIComponent(key)}" aria-label="減少數量">−</button><input class="cart-qty" data-cart-key="${encodeURIComponent(key)}" type="number" value="${item.qty}" min="1" max="99" inputmode="numeric" aria-label="輸入數量"><button type="button" class="qty-plus" data-cart-key="${encodeURIComponent(key)}" aria-label="增加數量">＋</button></div><button type="button" class="cart-remove" data-cart-key="${encodeURIComponent(key)}">刪除</button></div></div><strong>NT$ ${item.price * item.qty}</strong></div>`
   ).join('');
 }
 
-document.querySelector('#cartItems').addEventListener('change', event => {
-  const select = event.target.closest('.cart-qty');
-  if (!select) return;
-  const key = decodeURIComponent(select.dataset.cartKey);
+function setCartQty(key, quantity) {
   const item = cart.get(key);
   if (!item) return;
-  item.qty = Math.max(1, Math.min(Number(select.value), 10));
+  item.qty = clampQty(quantity);
   cart.set(key, item);
   updateCart();
+}
+
+document.querySelector('#cartItems').addEventListener('change', event => {
+  const input = event.target.closest('.cart-qty');
+  if (input) setCartQty(decodeURIComponent(input.dataset.cartKey), input.value);
+});
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('.qty-minus, .qty-plus');
+  if (!button) return;
+  const stepper = button.closest('.quantity-stepper');
+  const input = stepper?.querySelector('input');
+  if (!input) return;
+  const next = clampQty(Number(input.value) + (button.classList.contains('qty-plus') ? 1 : -1));
+  if (button.dataset.cartKey) setCartQty(decodeURIComponent(button.dataset.cartKey), next);
+  else input.value = next;
+});
+
+document.querySelector('#cartItems').addEventListener('click', event => {
+  const button = event.target.closest('.cart-remove');
+  if (!button) return;
+  cart.delete(decodeURIComponent(button.dataset.cartKey));
+  updateCart();
+  showToast('已從購物車刪除餐點');
 });
 
 function removeUnavailableCartItems() {
   if (!locationSelect?.value) return;
-  let removed = false;
+  let removedCount = 0;
   cart.forEach((item, key) => {
     const storeAllowed = availableStoreIds().includes(item.storeId);
     if ((item.locationsConfigured && !item.locations.includes(locationSelect.value)) || !storeAllowed) {
       cart.delete(key);
-      removed = true;
+      removedCount += item.qty;
     }
   });
-  if (removed) {
+  if (removedCount) {
     updateCart();
-    showToast('已移除此地點未供應的餐點');
+    showToast(`切換地點，已移除 ${removedCount} 份未供應餐點`);
   }
 }
 
@@ -166,16 +199,16 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
   const optionName = option?.value || '';
   const key = `${button.dataset.id}::${optionName}`;
   const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, storeId: card.dataset.storeId, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
-  const addQty = Math.max(1, Math.min(Number(card.querySelector('.meal-add-qty')?.value || 1), 10));
-  if (current.qty >= 10) {
-    showToast('每個餐點最多10份');
+  const addQty = clampQty(card.querySelector('.meal-add-qty')?.value || 1);
+  if (current.qty >= 99) {
+    showToast('每個餐點最多99份');
     return;
   }
-  const actualAdded = Math.min(addQty, 10 - current.qty);
+  const actualAdded = Math.min(addQty, 99 - current.qty);
   current.qty += actualAdded;
   cart.set(key, current);
   updateCart();
-  showToast(actualAdded < addQty ? `已加入${actualAdded}份，累計上限10份` : `已加入 ${current.name} × ${actualAdded}`);
+  showToast(actualAdded < addQty ? `已加入${actualAdded}份，累計上限99份` : `已加入 ${current.name} × ${actualAdded}`);
 }));
 
 document.querySelector('#checkoutButton').addEventListener('click', () => {
