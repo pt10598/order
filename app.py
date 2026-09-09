@@ -1,4 +1,5 @@
-import base64, hashlib, hmac, json, os, re, secrets, urllib.error, urllib.parse, urllib.request
+import base64, hashlib, hmac, json, os, re, secrets, threading, time as time_module, urllib.error, urllib.parse, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,12 @@ class MemoryStore:
   self.pickup_dates={"date-default":{"id":"date-default","date":self.settings["order_date"],"pickup_slots":DEFAULT_PICKUP_SLOTS,"active":True,"sort":1}}
   self.schedules={f"schedule-{i+1}":{"id":f"schedule-{i+1}","date":self.settings["order_date"],"location_id":x["id"],"location_name":x["name"],"pickup_slots":x["pickup_slots"],"active":True,"sort":x["sort"]} for i,x in enumerate(DEFAULT_LOCATIONS)}
 memory=MemoryStore()
+HOME_CACHE={"data":None,"expires_at":0.0}
+HOME_CACHE_LOCK=threading.Lock()
+
+def invalidate_home_cache():
+ with HOME_CACHE_LOCK:
+  HOME_CACHE["data"]=None; HOME_CACHE["expires_at"]=0.0
 
 def init_firestore():
  encoded=os.getenv("FIREBASE_CREDENTIALS_BASE64")
@@ -96,6 +103,7 @@ def get_item(name,item_id):
 def save_item(name,item_id,data):
  if db:db.collection(name).document(item_id).set(data,merge=True)
  else:{"meals":memory.meals,"locations":memory.locations,"stores":memory.stores,"pickup_dates":memory.pickup_dates}[name][item_id]={"id":item_id,**data}
+ invalidate_home_cache()
 
 def get_settings():
  if db:
@@ -106,6 +114,7 @@ def get_settings():
 def save_settings(data):
  if db:db.collection("settings").document("ordering").set(data,merge=True)
  else:memory.settings.update(data)
+ invalidate_home_cache()
 
 def list_schedules(active_only=False):
  if db:
@@ -122,6 +131,25 @@ def get_schedule(date,location_id):
 def save_schedule(schedule_id,data):
  if db:db.collection("schedules").document(schedule_id).set(data,merge=True)
  else:memory.schedules[schedule_id]={"id":schedule_id,**data}
+ invalidate_home_cache()
+
+def get_home_data():
+ now=time_module.monotonic()
+ with HOME_CACHE_LOCK:
+  if HOME_CACHE["data"] is not None and HOME_CACHE["expires_at"]>now:return HOME_CACHE["data"]
+ with ThreadPoolExecutor(max_workers=5) as pool:
+  jobs={
+   "meals":pool.submit(list_collection,"meals",True),
+   "stores":pool.submit(list_collection,"stores",True),
+   "locations":pool.submit(list_collection,"locations",True),
+   "pickup_dates":pool.submit(list_collection,"pickup_dates",True),
+   "settings":pool.submit(get_settings),
+  }
+  data={name:job.result() for name,job in jobs.items()}
+ ttl=max(5,min(int(os.getenv("HOME_CACHE_SECONDS","60")),300))
+ with HOME_CACHE_LOCK:
+  HOME_CACHE["data"]=data; HOME_CACHE["expires_at"]=time_module.monotonic()+ttl
+ return data
 
 def create_order(data):
  oid=datetime.now().strftime("%y%m%d")+"-"+secrets.token_hex(3).upper()
@@ -335,8 +363,8 @@ async def startup():seed_database()
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
- ensure_availability_model()
- return render(request,"index.html",meals=list_collection("meals",True),stores=list_collection("stores",True),locations=list_collection("locations",True),pickup_dates=list_collection("pickup_dates",True),settings=get_settings(),line_pay_configured=line_pay_configured(),line_pay_sandbox=os.getenv("LINE_PAY_ENV","sandbox").lower()!="production")
+ data=get_home_data()
+ return render(request,"index.html",**data,line_pay_configured=line_pay_configured(),line_pay_sandbox=os.getenv("LINE_PAY_ENV","sandbox").lower()!="production")
 
 @app.get("/order-lookup",response_class=HTMLResponse)
 async def order_lookup_page(request:Request):

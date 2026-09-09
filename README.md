@@ -44,6 +44,8 @@ Python FastAPI + Google Firestore 的可收單版本。
 
 選用：`CLOUDINARY_URL`，設定後後台可直接上傳餐點圖片。
 
+選用：`HOME_CACHE_SECONDS`，首頁資料快取秒數，預設為 `60`。後台修改菜單、店家、地點或日期時會立即清除快取。
+
 ## 更新 GitHub
 
 解壓縮後，把所有檔案上傳到原本 Repository，取代同名檔案，並確認舊的 `runtime.txt` 已刪除、根目錄有 `.python-version`。
