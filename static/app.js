@@ -284,7 +284,7 @@ document.querySelector('#orderForm').addEventListener('submit', (event) => {
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
   const total = document.querySelector('#dialogTotal').textContent;
   const confirmed = window.confirm(
-    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${location?.name || ''}\n取餐時間：${pickupTime}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
+    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${location?.name || ''}\n取餐時間：${pickupTime}\n付款：${document.querySelector('#paymentMethod').selectedOptions[0].textContent}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
   );
   if (!confirmed) {
     event.preventDefault();
@@ -292,5 +292,5 @@ document.querySelector('#orderForm').addEventListener('submit', (event) => {
   }
   const submitButton = event.currentTarget.querySelector('button[type="submit"]');
   submitButton.disabled = true;
-  submitButton.textContent = '訂單送出中…';
+  submitButton.textContent = document.querySelector('#paymentMethod').value === 'line_pay' ? '前往 LINE Pay…' : '訂單送出中…';
 });

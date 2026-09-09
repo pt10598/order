@@ -61,3 +61,18 @@ Heroku 與 GitHub 自動部署連接後，推送到 `main` 即可重新部署。
 
 - LINE Login（下一階段需要 LINE Developers Channel ID 與 Secret）
 - 線上付款
+# LINE Pay Sandbox 測試
+
+在 Heroku `Settings > Config Vars` 新增以下三項（請勿將金鑰放進 GitHub）：
+
+```text
+LINE_PAY_CHANNEL_ID=測試環境的 Channel ID
+LINE_PAY_CHANNEL_SECRET=測試環境的 Channel Secret Key
+LINE_PAY_ENV=sandbox
+```
+
+測試版使用 `https://sandbox-api-pay.line.me/v3`。付款成功後，訂單會記錄為
+`payment_status=paid`、`invoice_status=pending`；本版不會實際開立發票。
+
+正式上線前才將兩組金鑰換成正式環境資料，並把 `LINE_PAY_ENV` 改成
+`production`。正式環境會產生真實扣款，切換前務必先完成退款流程測試。

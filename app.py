@@ -128,6 +128,10 @@ def create_order(data):
  else:memory.orders[oid]={"id":oid,**data}
  return oid
 
+def update_order(oid,data):
+ if db:db.collection("orders").document(oid).set(data,merge=True)
+ elif oid in memory.orders:memory.orders[oid].update(data)
+
 def get_order(oid):
  if db:
   doc=db.collection("orders").document(oid).get(); return ({"id":doc.id,**(doc.to_dict() or {})} if doc.exists else None)
@@ -152,6 +156,24 @@ def customer_orders(phone):
 
 def line_configured():
  return bool(os.getenv("LINE_CHANNEL_SECRET") and os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
+
+def line_pay_configured():
+ return bool(os.getenv("LINE_PAY_CHANNEL_ID") and os.getenv("LINE_PAY_CHANNEL_SECRET"))
+
+def line_pay_base_url():
+ return "https://api-pay.line.me" if os.getenv("LINE_PAY_ENV","sandbox").lower()=="production" else "https://sandbox-api-pay.line.me"
+
+def line_pay_request(api_path,payload):
+ channel_id=os.getenv("LINE_PAY_CHANNEL_ID",""); channel_secret=os.getenv("LINE_PAY_CHANNEL_SECRET","")
+ if not channel_id or not channel_secret:raise RuntimeError("LINE Pay 尚未設定")
+ body=json.dumps(payload,ensure_ascii=False,separators=(",",":")); nonce=secrets.token_hex(16)
+ signature=base64.b64encode(hmac.new(channel_secret.encode(),f"{channel_secret}{api_path}{body}{nonce}".encode(),hashlib.sha256).digest()).decode()
+ req=urllib.request.Request(f"{line_pay_base_url()}{api_path}",data=body.encode(),headers={"Content-Type":"application/json","X-LINE-ChannelId":channel_id,"X-LINE-Authorization-Nonce":nonce,"X-LINE-Authorization":signature},method="POST")
+ try:
+  with urllib.request.urlopen(req,timeout=45) as response:return json.loads(response.read())
+ except urllib.error.HTTPError as exc:
+  detail=exc.read().decode(errors="replace"); raise RuntimeError(f"LINE Pay HTTP {exc.code}: {detail[:300]}") from exc
+ except (urllib.error.URLError,TimeoutError,json.JSONDecodeError) as exc:raise RuntimeError(f"LINE Pay 連線失敗：{exc}") from exc
 
 def ensure_line_pairing_code():
  settings=get_settings()
@@ -201,6 +223,7 @@ def send_order_notification(oid,order):
           f"取餐日期：{order['pickup_date']}\n"
           f"取餐地點：{order['location_name']}\n"
           f"取餐時間：{order['pickup_time']}\n"
+          f"付款：{'LINE Pay 已付款' if order.get('payment_status')=='paid' else '現場付款'}\n"
           f"發票：{order.get('invoice_label','實體發票')}\n\n"
           f"{item_lines}\n\n合計：NT$ {order['total']}{note}")[:4500]
  button_colors={"confirmed":"#2563EB","completed":"#0D9488","picked_up":"#0F766E","cancelled":"#DC2626"}
@@ -296,7 +319,7 @@ async def startup():seed_database()
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
  ensure_availability_model()
- return render(request,"index.html",meals=list_collection("meals",True),stores=list_collection("stores",True),locations=list_collection("locations",True),pickup_dates=list_collection("pickup_dates",True),settings=get_settings())
+ return render(request,"index.html",meals=list_collection("meals",True),stores=list_collection("stores",True),locations=list_collection("locations",True),pickup_dates=list_collection("pickup_dates",True),settings=get_settings(),line_pay_configured=line_pay_configured(),line_pay_sandbox=os.getenv("LINE_PAY_ENV","sandbox").lower()!="production")
 
 @app.get("/order-lookup",response_class=HTMLResponse)
 async def order_lookup_page(request:Request):
@@ -319,6 +342,7 @@ async def customer_cancel_order(request:Request,background_tasks:BackgroundTasks
  order=get_order(oid)
  if not order or order.get("phone")!=phone:return render(request,"message.html",title="找不到訂單",message="請確認手機號碼與訂單資料。")
  if order.get("status") in {"picked_up","cancelled"}:return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error="此訂單已取餐或已取消，無法再次取消。",success=None)
+ if order.get("payment_status")=="paid":return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error="此訂單已完成 LINE Pay 付款；退款功能尚未串接，請聯繫店家取消，避免只取消訂單但未退款。",success=None)
  now=datetime.now(timezone.utc).isoformat()
  if db:db.collection("orders").document(oid).set({"status":"cancelled","cancelled_by":"customer","cancelled_at":now,"updated_at":now},merge=True)
  elif oid in memory.orders:memory.orders[oid].update({"status":"cancelled","cancelled_by":"customer","cancelled_at":now,"updated_at":now})
@@ -326,11 +350,13 @@ async def customer_cancel_order(request:Request,background_tasks:BackgroundTasks
  return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error=None,success=f"訂單 {oid} 已成功取消，管理員將收到通知。")
 
 @app.post("/orders")
-async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),mobile_barcode:str=Form(""),tax_id:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
+async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),payment_method:str=Form("onsite"),mobile_barcode:str=Form(""),tax_id:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
  if invoice_type not in {"physical","mobile","business"}:return render(request,"message.html",title="發票方式錯誤",message="請重新選擇發票開立方式。")
+ if payment_method not in {"onsite","line_pay"}:return render(request,"message.html",title="付款方式錯誤",message="請重新選擇付款方式。")
+ if payment_method=="line_pay" and not line_pay_configured():return render(request,"message.html",title="LINE Pay 尚未開放",message="測試金鑰尚未設定，請先使用現場付款。")
  mobile_barcode=mobile_barcode.strip().upper()
  if invoice_type=="mobile" and not re.fullmatch(r"/[0-9A-Z.+-]{7}",mobile_barcode):return render(request,"message.html",title="手機載具格式錯誤",message="請輸入 / 加上 7 碼大寫英文、數字或 + - . 符號，例如 /ABC+123。")
  tax_id=re.sub(r"\D","",tax_id)
@@ -356,9 +382,42 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   price=int(option.get("price",0) if option else meal.get("price",0)); display_name=f"{meal['name']}（{option['name']}）" if option else meal["name"]
   items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  if not items:return render(request,"message.html",title="訂單沒有送出",message="選擇的餐點在此日期或地點未供應，請重新選擇。")
- now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else f"統編發票／收據 {tax_id}" if invoice_type=="business" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":location["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","tax_id":tax_id if invoice_type=="business" else "","invoice_label":invoice_label,"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
+ now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else f"統編發票／收據 {tax_id}" if invoice_type=="business" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":location["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","tax_id":tax_id if invoice_type=="business" else "","invoice_label":invoice_label,"invoice_status":"pending" if payment_method=="line_pay" else "not_paid","payment_method":payment_method,"payment_status":"pending" if payment_method=="line_pay" else "pay_on_pickup","note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
+ if payment_method=="line_pay":
+  base_url=str(request.base_url).rstrip("/")
+  payload={"amount":total,"currency":"TWD","orderId":oid,"packages":[{"id":oid,"amount":total,"name":"艾瑞塔園區訂餐","products":[{"id":item["meal_id"],"name":item["name"][:100],"quantity":item["qty"],"price":item["price"]} for item in items]}],"redirectUrls":{"confirmUrl":f"{base_url}/linepay/confirm?order_id={urllib.parse.quote(oid)}","cancelUrl":f"{base_url}/linepay/cancel?order_id={urllib.parse.quote(oid)}"}}
+  try:result=line_pay_request("/v3/payments/request",payload)
+  except RuntimeError as exc:
+   update_order(oid,{"payment_status":"request_failed","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 已保留，請稍後重試或聯繫店家。")
+  if result.get("returnCode")!="0000" or not result.get("info",{}).get("paymentUrl"):
+   update_order(oid,{"payment_status":"request_failed","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 已保留，錯誤：{result.get('returnMessage','未知錯誤')}")
+  transaction_id=str(result["info"].get("transactionId","")); update_order(oid,{"line_pay_transaction_id":transaction_id,"updated_at":datetime.now(timezone.utc).isoformat()})
+  payment_url=result["info"]["paymentUrl"].get("web") or result["info"]["paymentUrl"].get("app")
+  return RedirectResponse(payment_url,status_code=303)
  background_tasks.add_task(send_order_notification,oid,order)
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
+
+@app.get("/linepay/confirm",response_class=HTMLResponse)
+async def line_pay_confirm(request:Request,background_tasks:BackgroundTasks,order_id:str,transactionId:str=""):
+ order=get_order(order_id)
+ if not order:return render(request,"message.html",title="找不到訂單",message="LINE Pay 回傳的訂單不存在。")
+ if order.get("payment_status")=="paid":return RedirectResponse(f"/orders/{order_id}/success",status_code=303)
+ expected_transaction=str(order.get("line_pay_transaction_id",transactionId))
+ if not transactionId or transactionId!=expected_transaction:return render(request,"message.html",title="付款驗證失敗",message="LINE Pay 交易編號不一致，訂單尚未標記為付款成功。")
+ try:result=line_pay_request(f"/v3/payments/{urllib.parse.quote(transactionId,safe='')}/confirm",{"amount":int(order.get("total",0)),"currency":"TWD"})
+ except RuntimeError as exc:
+  update_order(order_id,{"payment_status":"confirm_failed","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款確認暫時失敗",message=f"訂單 {order_id} 尚未標記為已付款，請聯繫店家查詢交易，請勿重複付款。")
+ if result.get("returnCode")!="0000":
+  update_order(order_id,{"payment_status":"confirm_failed","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款確認失敗",message=f"訂單 {order_id}：{result.get('returnMessage','請聯繫店家確認')}。")
+ now=datetime.now(timezone.utc).isoformat(); updates={"payment_status":"paid","paid_at":now,"invoice_status":"pending","updated_at":now,"line_pay_confirm_result_code":result.get("returnCode")}; update_order(order_id,updates); order.update(updates)
+ background_tasks.add_task(send_order_notification,order_id,order)
+ return RedirectResponse(f"/orders/{order_id}/success",status_code=303)
+
+@app.get("/linepay/cancel",response_class=HTMLResponse)
+async def line_pay_cancel(request:Request,order_id:str):
+ order=get_order(order_id)
+ if order and order.get("payment_status")!="paid":update_order(order_id,{"payment_status":"cancelled","status":"cancelled","cancelled_by":"line_pay","updated_at":datetime.now(timezone.utc).isoformat()})
+ return render(request,"message.html",title="LINE Pay 付款已取消",message=f"訂單 {order_id} 尚未付款，歡迎返回菜單重新下單。")
 
 @app.post("/line/webhook")
 async def line_webhook(request:Request):
