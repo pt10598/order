@@ -437,6 +437,17 @@ async def admin_logout(request:Request):request.session.clear(); return Redirect
 async def admin_dashboard(request:Request,view:str="cards",start_date:str="",start_time:str="",end_date:str="",end_time:str="",status:str="",search:str="",sort:str="newest"):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  all_orders=list_orders(); orders=[]
+ meals_by_id={item["id"]:item for item in list_collection("meals")}
+ stores=list_collection("stores"); stores_by_id={item["id"]:item for item in stores}; stores_by_name={item.get("name",""):item for item in stores}
+ for order in all_orders:
+  enriched=[]
+  for original_index,row in enumerate(order.get("items") or []):
+   item=dict(row); meal=meals_by_id.get(item.get("meal_id",""),{}); store=stores_by_id.get(item.get("store_id",'')) or stores_by_name.get(item.get("store",''),{})
+   item["display_store"]=item.get("store") or store.get("name") or meal.get("store") or "未分類餐廳"
+   item["display_store_sort"]=int(store.get("sort",999)); item["display_meal_sort"]=int(meal.get("sort",999)); item["original_index"]=original_index
+   enriched.append(item)
+  enriched.sort(key=lambda item:(item["display_store_sort"],item["display_meal_sort"],item["original_index"]))
+  order["items"]=enriched
  try:start_at=datetime.combine(datetime.strptime(start_date,"%Y-%m-%d").date(),datetime.strptime(start_time or "00:00","%H:%M").time()) if start_date else None
  except ValueError:start_at=None
  try:end_at=datetime.combine(datetime.strptime(end_date,"%Y-%m-%d").date(),datetime.strptime(end_time or "23:59","%H:%M").time()) if end_date else None

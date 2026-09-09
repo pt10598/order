@@ -11,7 +11,7 @@ document.querySelectorAll('.status-select').forEach(select => {
 
 function alignOrderItemRows() {
   document.querySelectorAll('.order-table tbody tr').forEach(row => {
-    const columns = ['.order-item-names', '.order-item-qtys', '.order-item-subtotals']
+    const columns = ['.order-item-stores', '.order-item-names', '.order-item-qtys', '.order-item-subtotals']
       .map(selector => [...row.querySelectorAll(`${selector} .order-item-row`)]);
     const rowCount = Math.max(0, ...columns.map(items => items.length));
     columns.flat().forEach(item => { item.style.minHeight = ''; });
