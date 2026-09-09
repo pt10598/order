@@ -280,20 +280,46 @@ mobileBarcodeSuffix.addEventListener('input', () => {
 updateInvoiceFields();
 
 const paymentMethod = document.querySelector('#paymentMethod');
-const linePayLogo = document.querySelector('#linePayLogo');
-function updatePaymentLogo() {
-  linePayLogo.hidden = paymentMethod.value !== 'line_pay';
-  paymentMethod.closest('.payment-select-wrap').classList.toggle('line-pay-selected', paymentMethod.value === 'line_pay');
+const paymentDropdown = document.querySelector('#paymentDropdown');
+const paymentTrigger = document.querySelector('#paymentDropdownTrigger');
+const paymentMenu = document.querySelector('#paymentDropdownMenu');
+const paymentCurrentText = document.querySelector('#paymentCurrentText');
+function closePaymentMenu() {
+  paymentMenu.hidden = true;
+  paymentTrigger.setAttribute('aria-expanded', 'false');
 }
-paymentMethod.addEventListener('change', updatePaymentLogo);
-updatePaymentLogo();
+paymentTrigger.addEventListener('click', () => {
+  const willOpen = paymentMenu.hidden;
+  paymentMenu.hidden = !willOpen;
+  paymentTrigger.setAttribute('aria-expanded', String(willOpen));
+});
+paymentMenu.querySelectorAll('.payment-option').forEach(option => option.addEventListener('click', () => {
+  const value = option.dataset.payment;
+  paymentMethod.value = value;
+  paymentCurrentText.textContent = option.querySelector('strong').textContent;
+  paymentTrigger.querySelector('img').hidden = value !== 'line_pay';
+  paymentTrigger.querySelector('.onsite-icon').hidden = value === 'line_pay';
+  paymentDropdown.classList.toggle('line-pay-selected', value === 'line_pay');
+  paymentMenu.querySelectorAll('.payment-option').forEach(item => {
+    const selected = item === option;
+    item.classList.toggle('selected', selected);
+    item.setAttribute('aria-selected', String(selected));
+  });
+  closePaymentMenu();
+}));
+document.addEventListener('click', event => {
+  if (!paymentDropdown.contains(event.target)) closePaymentMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closePaymentMenu();
+});
 
 document.querySelector('#orderForm').addEventListener('submit', (event) => {
   const location = selectedLocation();
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
   const total = document.querySelector('#dialogTotal').textContent;
   const confirmed = window.confirm(
-    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${location?.name || ''}\n取餐時間：${pickupTime}\n付款：${document.querySelector('#paymentMethod').selectedOptions[0].textContent}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
+    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${location?.name || ''}\n取餐時間：${pickupTime}\n付款：${paymentCurrentText.textContent}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
   );
   if (!confirmed) {
     event.preventDefault();
