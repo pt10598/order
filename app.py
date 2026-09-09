@@ -1,4 +1,4 @@
-import base64, hashlib, hmac, json, os, re, secrets, urllib.error, urllib.request
+import base64, hashlib, hmac, json, os, re, secrets, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, https_only=bool
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 cancel_serializer=URLSafeTimedSerializer(SESSION_SECRET,salt="customer-order-cancel")
+line_status_serializer=URLSafeTimedSerializer(SESSION_SECRET,salt="line-order-status")
 TAIPEI_TZ=timezone(timedelta(hours=8))
 
 def taipei_datetime(value):
@@ -159,14 +160,33 @@ def ensure_line_pairing_code():
   code=secrets.token_hex(3).upper(); save_settings({"line_pairing_code":code})
  return code
 
-def push_line_message(to,text):
+def line_api_request(path,payload=None,method="POST"):
  token=os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
- if not token or not to:return
- payload=json.dumps({"to":to,"messages":[{"type":"text","text":text}]},ensure_ascii=False).encode()
- request=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,headers={"Authorization":f"Bearer {token}","Content-Type":"application/json"},method="POST")
+ if not token:return None
+ data=json.dumps(payload,ensure_ascii=False).encode() if payload is not None else None
+ request=urllib.request.Request(f"https://api.line.me{path}",data=data,headers={"Authorization":f"Bearer {token}","Content-Type":"application/json"},method=method)
  try:
-  with urllib.request.urlopen(request,timeout=10) as response:response.read()
- except (urllib.error.URLError,urllib.error.HTTPError,TimeoutError) as exc:print(f"LINE push failed: {exc}")
+  with urllib.request.urlopen(request,timeout=10) as response:
+   body=response.read()
+   return json.loads(body) if body else {}
+ except (urllib.error.URLError,urllib.error.HTTPError,TimeoutError,json.JSONDecodeError) as exc:
+  print(f"LINE API failed: {exc}")
+  return None
+
+def push_line_messages(to,messages):
+ if to:line_api_request("/v2/bot/message/push",{"to":to,"messages":messages})
+
+def push_line_message(to,text):push_line_messages(to,[{"type":"text","text":text}])
+
+def reply_line_message(reply_token,text):
+ if reply_token:line_api_request("/v2/bot/message/reply",{"replyToken":reply_token,"messages":[{"type":"text","text":text}]})
+
+def line_member_name(group_id,user_id):
+ if not group_id or not user_id:return "LINE 群組成員"
+ profile=line_api_request(f"/v2/bot/group/{urllib.parse.quote(group_id,safe='')}/member/{urllib.parse.quote(user_id,safe='')}",method="GET")
+ return profile.get("displayName","LINE 群組成員") if isinstance(profile,dict) else "LINE 群組成員"
+
+STATUS_LABELS={"new":"新訂單","confirmed":"已確認","completed":"已完成","picked_up":"已取餐","cancelled":"已取消"}
 
 def send_order_notification(oid,order):
  group_id=get_settings().get("line_group_id")
@@ -181,15 +201,20 @@ def send_order_notification(oid,order):
           f"取餐地點：{order['location_name']}\n"
           f"取餐時間：{order['pickup_time']}\n"
           f"發票：{order.get('invoice_label','實體發票')}\n\n"
-          f"{item_lines}\n\n合計：NT$ {order['total']}{note}")
- push_line_message(group_id,message[:5000])
+          f"{item_lines}\n\n合計：NT$ {order['total']}{note}")[:4500]
+ button_colors={"confirmed":"#2563EB","completed":"#0D9488","picked_up":"#0F766E","cancelled":"#DC2626"}
+ buttons=[]
+ for status in ("confirmed","completed","picked_up","cancelled"):
+  token=line_status_serializer.dumps({"order_id":oid,"status":status,"group_id":group_id})
+  buttons.append({"type":"button","style":"primary","height":"sm","margin":"sm","color":button_colors[status],"action":{"type":"postback","label":STATUS_LABELS[status],"data":f"order_status:{token}"}})
+ flex={"type":"flex","altText":f"新訂單 {oid}｜{order['customer_name']}｜NT$ {order['total']}","contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","contents":[{"type":"text","text":message,"wrap":True,"size":"sm","color":"#14241F"}]},"footer":{"type":"box","layout":"vertical","spacing":"sm","contents":buttons}}}
+ push_line_messages(group_id,[flex])
 
 def send_status_notification(oid,order,status):
  group_id=get_settings().get("line_group_id")
  if not group_id:return
- labels={"new":"新訂單","confirmed":"已確認","completed":"已完成","picked_up":"已取餐","cancelled":"已取消"}
  icons={"new":"🆕","confirmed":"✅","completed":"🎉","picked_up":"🥡","cancelled":"❌"}
- label=labels.get(status,status)
+ label=STATUS_LABELS.get(status,status)
  message=(f"{icons.get(status,'📌')} 訂單狀態更新\n"
           f"訂單編號：{oid}\n"
           f"目前狀態：{label}\n"
@@ -317,7 +342,39 @@ async def line_webhook(request:Request):
   if source.get("type")=="group" and source.get("groupId"):
    group_id=source["groupId"]
    settings=get_settings()
-   if event.get("type")=="leave" and settings.get("line_group_id")==group_id:save_settings({"line_group_id":"","line_pairing_code":""})
+   if event.get("type")=="postback" and event.get("postback",{}).get("data","").startswith("order_status:"):
+    reply_token=event.get("replyToken","")
+    try:action=line_status_serializer.loads(event["postback"]["data"].split(":",1)[1],max_age=60*60*24*30)
+    except (BadSignature,SignatureExpired):
+     reply_line_message(reply_token,"⚠️ 此訂單操作按鈕已失效，請至管理後台確認。")
+     continue
+    oid=str(action.get("order_id","")); target_status=str(action.get("status",""))
+    if action.get("group_id")!=group_id or settings.get("line_group_id")!=group_id or target_status not in {"confirmed","completed","picked_up","cancelled"}:
+     reply_line_message(reply_token,"⚠️ 無法驗證這次操作，訂單狀態未變更。")
+     continue
+    order=get_order(oid)
+    if not order:
+     reply_line_message(reply_token,f"⚠️ 找不到訂單 {oid}，狀態未變更。")
+     continue
+    previous_status=order.get("status","new")
+    if previous_status in {"picked_up","cancelled"}:
+     reply_line_message(reply_token,f"ℹ️ 訂單 {oid} 已是「{STATUS_LABELS.get(previous_status,previous_status)}」，不能再由 LINE 變更。")
+     continue
+    if previous_status==target_status:
+     reply_line_message(reply_token,f"ℹ️ 訂單 {oid} 已經是「{STATUS_LABELS[target_status]}」。")
+     continue
+    operator_id=source.get("userId",""); operator_name=line_member_name(group_id,operator_id)
+    now=datetime.now(timezone.utc).isoformat(); history=list(order.get("status_history") or [])
+    history.append({"from":previous_status,"to":target_status,"updated_at":now,"updated_by":operator_name,"updated_by_line_user_id":operator_id,"source":"line"})
+    updates={"status":target_status,"updated_at":now,"updated_by":operator_name,"updated_by_line_user_id":operator_id,"updated_via":"line","status_history":history[-100:]}
+    if db:db.collection("orders").document(oid).set(updates,merge=True)
+    elif oid in memory.orders:memory.orders[oid].update(updates)
+    reply_line_message(reply_token,(f"✅ 訂單狀態已更新\n"
+                                    f"訂單編號：{oid}\n"
+                                    f"狀態：{STATUS_LABELS.get(previous_status,previous_status)} → {STATUS_LABELS[target_status]}\n"
+                                    f"操作者：{operator_name}\n"
+                                    f"更新時間：{format_taipei_datetime(now)}"))
+   elif event.get("type")=="leave" and settings.get("line_group_id")==group_id:save_settings({"line_group_id":"","line_pairing_code":""})
    elif event.get("type")=="message" and event.get("message",{}).get("type")=="text":
     pairing_code=settings.get("line_pairing_code","")
     expected_text=f"啟用訂單通知 {pairing_code}" if pairing_code else ""
@@ -380,8 +437,11 @@ async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,
  order=get_order(oid)
  if not order:return RedirectResponse("/admin",status_code=303)
  previous_status=order.get("status","new")
- if db:db.collection("orders").document(oid).set({"status":status,"updated_at":datetime.now(timezone.utc).isoformat()},merge=True)
- elif oid in memory.orders:memory.orders[oid]["status"]=status
+ now=datetime.now(timezone.utc).isoformat(); history=list(order.get("status_history") or [])
+ if status!=previous_status:history.append({"from":previous_status,"to":status,"updated_at":now,"updated_by":"管理後台","source":"admin"})
+ updates={"status":status,"updated_at":now,"updated_by":"管理後台","updated_via":"admin","status_history":history[-100:]}
+ if db:db.collection("orders").document(oid).set(updates,merge=True)
+ elif oid in memory.orders:memory.orders[oid].update(updates)
  if status!=previous_status and status=="cancelled":background_tasks.add_task(send_status_notification,oid,order,status)
  safe_return=return_to if return_to.startswith("/admin") and not return_to.startswith("//") else "/admin"
  return RedirectResponse(safe_return,status_code=303)
