@@ -9,6 +9,23 @@ document.querySelectorAll('.status-select').forEach(select => {
   select.addEventListener('change', () => updateStatusColor(select));
 });
 
+function alignOrderItemRows() {
+  document.querySelectorAll('.order-table tbody tr').forEach(row => {
+    const columns = ['.order-item-names', '.order-item-qtys', '.order-item-subtotals']
+      .map(selector => [...row.querySelectorAll(`${selector} .order-item-row`)]);
+    const rowCount = Math.max(0, ...columns.map(items => items.length));
+    columns.flat().forEach(item => { item.style.minHeight = ''; });
+    for (let index = 0; index < rowCount; index += 1) {
+      const items = columns.map(column => column[index]).filter(Boolean);
+      const height = Math.max(...items.map(item => item.getBoundingClientRect().height));
+      items.forEach(item => { item.style.minHeight = `${height}px`; });
+    }
+  });
+}
+
+alignOrderItemRows();
+window.addEventListener('resize', alignOrderItemRows);
+
 document.querySelectorAll('.order-table').forEach(table => {
   const body = table.tBodies[0];
   const buttons = [...table.querySelectorAll('.table-sort')];
@@ -33,6 +50,7 @@ document.querySelectorAll('.order-table').forEach(table => {
         return nextDirection === 'asc' ? result : -result;
       });
       rows.forEach(row => body.appendChild(row));
+      alignOrderItemRows();
       sessionStorage.setItem('adminOrderSort', JSON.stringify({columnIndex, direction: nextDirection}));
     });
   });
