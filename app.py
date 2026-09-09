@@ -342,7 +342,7 @@ async def customer_cancel_order(request:Request,background_tasks:BackgroundTasks
  order=get_order(oid)
  if not order or order.get("phone")!=phone:return render(request,"message.html",title="找不到訂單",message="請確認手機號碼與訂單資料。")
  if order.get("status") in {"picked_up","cancelled"}:return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error="此訂單已取餐或已取消，無法再次取消。",success=None)
- if order.get("payment_status")=="paid":return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error="此訂單已完成 LINE Pay 付款；退款功能尚未串接，請聯繫店家取消，避免只取消訂單但未退款。",success=None)
+ if order.get("payment_status") in {"paid","verification_pending"}:return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error="此訂單已付款或付款結果仍在確認中；退款功能尚未串接，請聯繫店家處理，避免只取消訂單但未退款。",success=None)
  now=datetime.now(timezone.utc).isoformat()
  if db:db.collection("orders").document(oid).set({"status":"cancelled","cancelled_by":"customer","cancelled_at":now,"updated_at":now},merge=True)
  elif oid in memory.orders:memory.orders[oid].update({"status":"cancelled","cancelled_by":"customer","cancelled_at":now,"updated_at":now})
@@ -388,9 +388,9 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   payload={"amount":total,"currency":"TWD","orderId":oid,"packages":[{"id":oid,"amount":total,"name":"艾瑞塔園區訂餐","products":[{"id":item["meal_id"],"name":item["name"][:100],"quantity":item["qty"],"price":item["price"]} for item in items]}],"redirectUrls":{"confirmUrl":f"{base_url}/linepay/confirm?order_id={urllib.parse.quote(oid)}","cancelUrl":f"{base_url}/linepay/cancel?order_id={urllib.parse.quote(oid)}"}}
   try:result=line_pay_request("/v3/payments/request",payload)
   except RuntimeError as exc:
-   update_order(oid,{"payment_status":"request_failed","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 已保留，請稍後重試或聯繫店家。")
+   update_order(oid,{"payment_status":"request_failed","status":"cancelled","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 未付款且已自動取消，請返回菜單重新下單。")
   if result.get("returnCode")!="0000" or not result.get("info",{}).get("paymentUrl"):
-   update_order(oid,{"payment_status":"request_failed","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 已保留，錯誤：{result.get('returnMessage','未知錯誤')}")
+   update_order(oid,{"payment_status":"request_failed","status":"cancelled","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 未付款且已自動取消，錯誤：{result.get('returnMessage','未知錯誤')}")
   transaction_id=str(result["info"].get("transactionId","")); update_order(oid,{"line_pay_transaction_id":transaction_id,"updated_at":datetime.now(timezone.utc).isoformat()})
   payment_url=result["info"]["paymentUrl"].get("web") or result["info"]["paymentUrl"].get("app")
   return RedirectResponse(payment_url,status_code=303)
@@ -406,9 +406,9 @@ async def line_pay_confirm(request:Request,background_tasks:BackgroundTasks,orde
  if not transactionId or transactionId!=expected_transaction:return render(request,"message.html",title="付款驗證失敗",message="LINE Pay 交易編號不一致，訂單尚未標記為付款成功。")
  try:result=line_pay_request(f"/v3/payments/{urllib.parse.quote(transactionId,safe='')}/confirm",{"amount":int(order.get("total",0)),"currency":"TWD"})
  except RuntimeError as exc:
-  update_order(order_id,{"payment_status":"confirm_failed","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款確認暫時失敗",message=f"訂單 {order_id} 尚未標記為已付款，請聯繫店家查詢交易，請勿重複付款。")
+  update_order(order_id,{"payment_status":"verification_pending","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款結果確認中",message=f"訂單 {order_id} 的付款結果尚待確認，請勿重複付款；店家可依交易編號查詢。")
  if result.get("returnCode")!="0000":
-  update_order(order_id,{"payment_status":"confirm_failed","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款確認失敗",message=f"訂單 {order_id}：{result.get('returnMessage','請聯繫店家確認')}。")
+  update_order(order_id,{"payment_status":"failed","status":"cancelled","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款未成功",message=f"訂單 {order_id} 未付款且已自動取消：{result.get('returnMessage','請重新下單')}。")
  now=datetime.now(timezone.utc).isoformat(); updates={"payment_status":"paid","paid_at":now,"invoice_status":"pending","updated_at":now,"line_pay_confirm_result_code":result.get("returnCode")}; update_order(order_id,updates); order.update(updates)
  background_tasks.add_task(send_order_notification,order_id,order)
  return RedirectResponse(f"/orders/{order_id}/success",status_code=303)

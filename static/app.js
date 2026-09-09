@@ -279,6 +279,15 @@ mobileBarcodeSuffix.addEventListener('input', () => {
 });
 updateInvoiceFields();
 
+const paymentMethod = document.querySelector('#paymentMethod');
+const linePayLogo = document.querySelector('#linePayLogo');
+function updatePaymentLogo() {
+  linePayLogo.hidden = paymentMethod.value !== 'line_pay';
+  paymentMethod.closest('.payment-select-wrap').classList.toggle('line-pay-selected', paymentMethod.value === 'line_pay');
+}
+paymentMethod.addEventListener('change', updatePaymentLogo);
+updatePaymentLogo();
+
 document.querySelector('#orderForm').addEventListener('submit', (event) => {
   const location = selectedLocation();
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
