@@ -25,10 +25,7 @@ function applyFilters() {
     const categoryOk = activeCategory === '全部' || card.dataset.category === activeCategory;
     const storeOk = activeStore === '全部' || card.dataset.storeId === activeStore;
     const scheduleStoreOk = availableStoreIds().includes(card.dataset.storeId);
-    const configured = card.dataset.locationsConfigured === 'true';
-    const locations = card.dataset.locations ? card.dataset.locations.split(',') : [];
-    const locationOk = !configured || locations.includes(locationSelect.value);
-    card.hidden = !(categoryOk && storeOk && scheduleStoreOk && locationOk);
+    card.hidden = !(categoryOk && storeOk && scheduleStoreOk);
     if (!card.hidden) visible++;
   });
   document.querySelector('#emptyState').hidden = visible !== 0;
@@ -40,30 +37,38 @@ filters.forEach(button => button.addEventListener('click', () => {
   activeCategory = button.dataset.filter;
   applyFilters();
 }));
-const schedules = window.ORDER_SCHEDULES || [];
+const pickupDates = window.ORDER_PICKUP_DATES || [];
+const locations = window.ORDER_LOCATIONS || [];
 const stores = window.ORDER_STORES || [];
 const dateSelect = document.querySelector('#dateSelect');
+const timeSelect = document.querySelector('#timeSelect');
 const locationSelect = document.querySelector('#locationSelect');
 
-function selectedSchedule() {
-  return schedules.find(item => item.date === dateSelect.value && item.location_id === locationSelect.value);
+function selectedDateConfig() {
+  return pickupDates.find(item => item.date === dateSelect.value);
 }
 
-function updatePickupSlots() {
-  const schedule = selectedSchedule();
-  const slots = schedule?.pickup_slots || [];
-  document.querySelector('#pickupTime').textContent = slots.length ? `可選時間 ${slots.join('、')}` : '目前沒有可選時段';
+function selectedLocation() {
+  return locations.find(item => item.id === locationSelect.value);
+}
+
+function selectedSlotKey() {
+  return `${dateSelect.value}|${timeSelect.value}`;
+}
+
+function updateAvailability() {
+  const location = selectedLocation();
+  document.querySelector('#pickupTime').textContent = location ? `取餐：${dateSelect.value}・${timeSelect.value}・${location.name}` : '這個時段目前沒有可選地點';
   const slotSelect = document.querySelector('#pickupTimeSelect');
-  slotSelect.replaceChildren(...slots.map(slot => new Option(slot, slot)));
+  slotSelect.replaceChildren(...(timeSelect.value ? [new Option(timeSelect.value, timeSelect.value)] : []));
   updateStores();
   removeUnavailableCartItems();
   applyFilters();
 }
 
 function availableStoreIds() {
-  const schedule = selectedSchedule();
-  if (!schedule) return [];
-  return schedule.stores_configured ? (schedule.store_ids || []) : stores.filter(store => store.active !== false).map(store => store.id);
+  if (!selectedLocation()) return [];
+  return stores.filter(store => store.active !== false && (!store.locations_configured || (store.location_ids || []).includes(locationSelect.value))).map(store => store.id);
 }
 
 function updateStores() {
@@ -99,14 +104,26 @@ document.querySelectorAll('[data-meal-view]').forEach(button => button.addEventL
 }));
 
 function updateLocations() {
-  const available = schedules.filter(item => item.date === dateSelect.value && item.active !== false);
-  locationSelect.replaceChildren(...available.map(item => new Option(item.location_name, item.location_id)));
-  updatePickupSlots();
+  const previous = locationSelect.value;
+  const key = selectedSlotKey();
+  const available = locations.filter(item => item.active !== false && (!item.availability_configured || (item.slot_keys || []).includes(key)));
+  locationSelect.replaceChildren(...available.map(item => new Option(item.name, item.id)));
+  if (available.some(item => item.id === previous)) locationSelect.value = previous;
+  updateAvailability();
 }
 
-dateSelect.addEventListener('change', updateLocations);
-locationSelect.addEventListener('change', updatePickupSlots);
-updateLocations();
+function updateTimes() {
+  const previous = timeSelect.value;
+  const slots = selectedDateConfig()?.pickup_slots || [];
+  timeSelect.replaceChildren(...slots.map(slot => new Option(slot, slot)));
+  if (slots.includes(previous)) timeSelect.value = previous;
+  updateLocations();
+}
+
+dateSelect.addEventListener('change', updateTimes);
+timeSelect.addEventListener('change', updateLocations);
+locationSelect.addEventListener('change', updateAvailability);
+updateTimes();
 
 document.querySelectorAll('.date').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.date').forEach(item => item.classList.remove('active'));
@@ -175,7 +192,7 @@ function removeUnavailableCartItems() {
   let removedCount = 0;
   cart.forEach((item, key) => {
     const storeAllowed = availableStoreIds().includes(item.storeId);
-    if ((item.locationsConfigured && !item.locations.includes(locationSelect.value)) || !storeAllowed) {
+    if (!storeAllowed) {
       cart.delete(key);
       removedCount += item.qty;
     }
@@ -212,15 +229,15 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
 }));
 
 document.querySelector('#checkoutButton').addEventListener('click', () => {
-  if (!dateSelect.value || !locationSelect.value || !selectedSchedule()) {
-    showToast('目前沒有可下單的日期與地點');
+  if (!dateSelect.value || !timeSelect.value || !locationSelect.value || !selectedLocation()) {
+    showToast('請先選擇可下單的日期、時間與地點');
     return;
   }
   document.querySelector('#itemsJson').value = JSON.stringify([...cart.values()].map(item => ({id: item.mealId, option_name: item.optionName, qty: item.qty})));
   document.querySelector('#orderLocation').value = locationSelect.value;
   document.querySelector('#orderDate').value = dateSelect.value;
   document.querySelector('#orderDateDisplay').value = dateSelect.value;
-  document.querySelector('#orderLocationDisplay').value = selectedSchedule().location_name;
+  document.querySelector('#orderLocationDisplay').value = selectedLocation().name;
   cartDialog.showModal();
 });
 document.querySelector('#closeDialog').addEventListener('click', () => cartDialog.close());
@@ -263,11 +280,11 @@ mobileBarcodeSuffix.addEventListener('input', () => {
 updateInvoiceFields();
 
 document.querySelector('#orderForm').addEventListener('submit', (event) => {
-  const schedule = selectedSchedule();
+  const location = selectedLocation();
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
   const total = document.querySelector('#dialogTotal').textContent;
   const confirmed = window.confirm(
-    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${schedule?.location_name || ''}\n取餐時間：${pickupTime}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
+    `請再次確認訂單資料：\n\n取餐日期：${dateSelect.value}\n取餐地點：${location?.name || ''}\n取餐時間：${pickupTime}\n發票：${invoiceType.value === 'mobile' ? `手機載具 ${mobileBarcode.value}` : invoiceType.value === 'business' ? `統編發票／收據 ${taxId.value}` : '實體發票'}\n訂單金額：${total}\n\n確認送出訂單嗎？`
   );
   if (!confirmed) {
     event.preventDefault();
