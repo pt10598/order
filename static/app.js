@@ -4,8 +4,28 @@ const cards = document.querySelectorAll('.meal-card');
 const storePicker = document.querySelector('#storePicker');
 const cartBar = document.querySelector('#cartBar');
 const cartDialog = document.querySelector('#cartDialog');
+const orderForm = document.querySelector('#orderForm');
+const checkoutToken = document.createElement('input');
+checkoutToken.type = 'hidden';
+checkoutToken.name = 'checkout_token';
+checkoutToken.id = 'checkoutToken';
+orderForm.append(checkoutToken);
 let activeCategory = '全部';
 let activeStore = '全部';
+
+function invalidateCheckoutToken() {
+  checkoutToken.value = '';
+}
+
+function ensureCheckoutToken() {
+  if (checkoutToken.value) return;
+  if (window.crypto?.randomUUID) checkoutToken.value = window.crypto.randomUUID();
+  else {
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    checkoutToken.value = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+  }
+}
 
 function clampQty(value) {
   const parsed = Number.parseInt(value, 10);
@@ -123,6 +143,7 @@ function updateTimes() {
 dateSelect.addEventListener('change', updateTimes);
 timeSelect.addEventListener('change', updateLocations);
 locationSelect.addEventListener('change', updateAvailability);
+[dateSelect, timeSelect, locationSelect].forEach(field => field.addEventListener('change', invalidateCheckoutToken));
 updateTimes();
 
 document.querySelectorAll('.date').forEach(button => button.addEventListener('click', () => {
@@ -160,6 +181,7 @@ function setCartQty(key, quantity) {
   if (!item) return;
   item.qty = clampQty(quantity);
   cart.set(key, item);
+  invalidateCheckoutToken();
   updateCart();
 }
 
@@ -183,6 +205,7 @@ document.querySelector('#cartItems').addEventListener('click', event => {
   const button = event.target.closest('.cart-remove');
   if (!button) return;
   cart.delete(decodeURIComponent(button.dataset.cartKey));
+  invalidateCheckoutToken();
   updateCart();
   showToast('已從購物車刪除餐點');
 });
@@ -194,6 +217,7 @@ function removeUnavailableCartItems() {
     const storeAllowed = availableStoreIds().includes(item.storeId);
     if (!storeAllowed) {
       cart.delete(key);
+      invalidateCheckoutToken();
       removedCount += item.qty;
     }
   });
@@ -224,6 +248,7 @@ document.querySelectorAll('.add-button').forEach(button => button.addEventListen
   const actualAdded = Math.min(addQty, 99 - current.qty);
   current.qty += actualAdded;
   cart.set(key, current);
+  invalidateCheckoutToken();
   updateCart();
   showToast(actualAdded < addQty ? `已加入${actualAdded}份，累計上限99份` : `已加入 ${current.name} × ${actualAdded}`);
 }));
@@ -295,6 +320,7 @@ paymentTrigger.addEventListener('click', () => {
 });
 paymentMenu.querySelectorAll('.payment-option').forEach(option => option.addEventListener('click', () => {
   const value = option.dataset.payment;
+  if (paymentMethod.value !== value) invalidateCheckoutToken();
   paymentMethod.value = value;
   paymentCurrentText.textContent = option.querySelector('strong').textContent;
   paymentTrigger.querySelector('img').hidden = value !== 'line_pay';
@@ -314,7 +340,11 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closePaymentMenu();
 });
 
-document.querySelector('#orderForm').addEventListener('submit', (event) => {
+orderForm.addEventListener('input', event => {
+  if (event.target !== checkoutToken) invalidateCheckoutToken();
+});
+
+orderForm.addEventListener('submit', (event) => {
   const location = selectedLocation();
   const pickupTime = document.querySelector('#pickupTimeSelect').value;
   const total = document.querySelector('#dialogTotal').textContent;
@@ -325,7 +355,14 @@ document.querySelector('#orderForm').addEventListener('submit', (event) => {
     event.preventDefault();
     return;
   }
+  ensureCheckoutToken();
   const submitButton = event.currentTarget.querySelector('button[type="submit"]');
   submitButton.disabled = true;
   submitButton.textContent = document.querySelector('#paymentMethod').value === 'line_pay' ? '前往 LINE Pay…' : '訂單送出中…';
+});
+
+window.addEventListener('pageshow', () => {
+  const submitButton = orderForm.querySelector('button[type="submit"]');
+  submitButton.disabled = false;
+  submitButton.textContent = '送出訂單';
 });

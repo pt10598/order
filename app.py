@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from firebase_admin import credentials, firestore
+from google.cloud import firestore as google_firestore
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -127,6 +128,22 @@ def create_order(data):
  if db:db.collection("orders").document(oid).set(data)
  else:memory.orders[oid]={"id":oid,**data}
  return oid
+
+def create_order_once(data,checkout_token):
+ """Create exactly one order for a browser checkout attempt."""
+ oid=datetime.now().strftime("%y%m%d")+"-"+hashlib.sha256(checkout_token.encode()).hexdigest()[:8].upper()
+ if db:
+  ref=db.collection("orders").document(oid); transaction=db.transaction()
+  @google_firestore.transactional
+  def commit_once(txn):
+   snapshot=ref.get(transaction=txn)
+   if snapshot.exists:return False
+   txn.set(ref,data); return True
+  created=commit_once(transaction)
+ else:
+  created=oid not in memory.orders
+  if created:memory.orders[oid]={"id":oid,**data}
+ return oid,created
 
 def update_order(oid,data):
  if db:db.collection("orders").document(oid).set(data,merge=True)
@@ -350,13 +367,15 @@ async def customer_cancel_order(request:Request,background_tasks:BackgroundTasks
  return render(request,"order_lookup.html",orders=customer_orders(phone),phone=phone,searched=True,error=None,success=f"訂單 {oid} 已成功取消，管理員將收到通知。")
 
 @app.post("/orders")
-async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),payment_method:str=Form("onsite"),mobile_barcode:str=Form(""),tax_id:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
+async def submit_order(request:Request,background_tasks:BackgroundTasks,customer_name:str=Form(...),phone:str=Form(...),location_id:str=Form(...),pickup_date:str=Form(...),pickup_time:str=Form(...),invoice_type:str=Form(...),payment_method:str=Form("onsite"),checkout_token:str=Form(""),mobile_barcode:str=Form(""),tax_id:str=Form(""),note:str=Form(""),items_json:str=Form(...)):
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
  if invoice_type not in {"physical","mobile","business"}:return render(request,"message.html",title="發票方式錯誤",message="請重新選擇發票開立方式。")
  if payment_method not in {"onsite","line_pay"}:return render(request,"message.html",title="付款方式錯誤",message="請重新選擇付款方式。")
  if payment_method=="line_pay" and not line_pay_configured():return render(request,"message.html",title="LINE Pay 尚未開放",message="測試金鑰尚未設定，請先使用現場付款。")
+ checkout_token=checkout_token.strip()
+ if not re.fullmatch(r"[0-9a-fA-F-]{32,64}",checkout_token):checkout_token=secrets.token_hex(24)
  mobile_barcode=mobile_barcode.strip().upper()
  if invoice_type=="mobile" and not re.fullmatch(r"/[0-9A-Z.+-]{7}",mobile_barcode):return render(request,"message.html",title="手機載具格式錯誤",message="請輸入 / 加上 7 碼大寫英文、數字或 + - . 符號，例如 /ABC+123。")
  tax_id=re.sub(r"\D","",tax_id)
@@ -382,7 +401,13 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   price=int(option.get("price",0) if option else meal.get("price",0)); display_name=f"{meal['name']}（{option['name']}）" if option else meal["name"]
   items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  if not items:return render(request,"message.html",title="訂單沒有送出",message="選擇的餐點在此日期或地點未供應，請重新選擇。")
- now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else f"統編發票／收據 {tax_id}" if invoice_type=="business" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":location["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","tax_id":tax_id if invoice_type=="business" else "","invoice_label":invoice_label,"invoice_status":"pending" if payment_method=="line_pay" else "not_paid","payment_method":payment_method,"payment_status":"pending" if payment_method=="line_pay" else "pay_on_pickup","note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid=create_order(order)
+ now=datetime.now(timezone.utc).isoformat(); invoice_label="手機載具 "+mobile_barcode if invoice_type=="mobile" else f"統編發票／收據 {tax_id}" if invoice_type=="business" else "實體發票"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":location["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":mobile_barcode if invoice_type=="mobile" else "","tax_id":tax_id if invoice_type=="business" else "","invoice_label":invoice_label,"invoice_status":"pending" if payment_method=="line_pay" else "not_paid","payment_method":payment_method,"payment_status":"pending" if payment_method=="line_pay" else "pay_on_pickup","checkout_token_hash":hashlib.sha256(checkout_token.encode()).hexdigest(),"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid,created=create_order_once(order,checkout_token)
+ if not created:
+  existing=get_order(oid) or {}
+  if existing.get("payment_status")=="paid" or existing.get("payment_method")!="line_pay":return RedirectResponse(f"/orders/{oid}/success",status_code=303)
+  if existing.get("payment_status")=="pending" and existing.get("line_pay_payment_url"):return RedirectResponse(existing["line_pay_payment_url"],status_code=303)
+  if existing.get("payment_status")=="verification_pending":return render(request,"message.html",title="付款結果確認中",message=f"訂單 {oid} 正在確認付款結果，請勿重新付款，稍後可由訂單查詢查看狀態。")
+  return render(request,"message.html",title="這次付款未完成",message=f"訂單 {oid} 已取消或付款未成功；如要重新訂購，請返回菜單調整購物車後再送出。")
  if payment_method=="line_pay":
   base_url=str(request.base_url).rstrip("/")
   payload={"amount":total,"currency":"TWD","orderId":oid,"packages":[{"id":oid,"amount":total,"name":"艾瑞塔園區訂餐","products":[{"id":item["meal_id"],"name":item["name"][:100],"quantity":item["qty"],"price":item["price"]} for item in items]}],"redirectUrls":{"confirmUrl":f"{base_url}/linepay/confirm?order_id={urllib.parse.quote(oid)}","cancelUrl":f"{base_url}/linepay/cancel?order_id={urllib.parse.quote(oid)}"}}
@@ -391,8 +416,9 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
    update_order(oid,{"payment_status":"request_failed","status":"cancelled","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 未付款且已自動取消，請返回菜單重新下單。")
   if result.get("returnCode")!="0000" or not result.get("info",{}).get("paymentUrl"):
    update_order(oid,{"payment_status":"request_failed","status":"cancelled","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 未付款且已自動取消，錯誤：{result.get('returnMessage','未知錯誤')}")
-  transaction_id=str(result["info"].get("transactionId","")); update_order(oid,{"line_pay_transaction_id":transaction_id,"updated_at":datetime.now(timezone.utc).isoformat()})
+  transaction_id=str(result["info"].get("transactionId",""))
   payment_url=result["info"]["paymentUrl"].get("web") or result["info"]["paymentUrl"].get("app")
+  update_order(oid,{"line_pay_transaction_id":transaction_id,"line_pay_payment_url":payment_url,"updated_at":datetime.now(timezone.utc).isoformat()})
   return RedirectResponse(payment_url,status_code=303)
  background_tasks.add_task(send_order_notification,oid,order)
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
